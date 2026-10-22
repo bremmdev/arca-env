@@ -1,0 +1,49 @@
+{
+  "name": "@bremmdev/arca-env",
+  "version": "0.1.1",
+  "description": "Keep secrets out of .env files and out of reach of AI agents. Encrypted local store, injected at runtime, output always masked.",
+  "type": "module",
+  "license": "MIT",
+  "author": "bremmdev",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "arca": "./dist/cli.mjs"
+  },
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./schema.json": "./schema.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "schema.json"
+  ],
+  "keywords": [
+    "env",
+    "dotenv",
+    "secrets",
+    "ai-agents",
+    "keychain",
+    "redaction"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "@napi-rs/keyring": "^2.1.2",
+    "cross-spawn": "^7.0.6"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
+    "@types/node": "^26.6.5",
+    "tsdown": "^0.22.2",
+    "typescript": "^6.0.3",
+    "vitest": "^5.0.5"
+  }
+}
