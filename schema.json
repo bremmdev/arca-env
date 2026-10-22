@@ -19,6 +19,28 @@
       "default": [],
       "description": "Opt-in: .env files arca loads itself, for tools that don't (plain node, tsx). Injected below secrets and the shell env. Frameworks load their own .env files, so leave this empty for Next.js, Vite, Astro and friends."
     },
+    "defaultProfile": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$",
+      "description": "The profile used when none is picked with `arca use`, ARCA_PROFILE or --profile. Defaults to \"default\" if declared, otherwise the first profile."
+    },
+    "profiles": {
+      "type": "object",
+      "description": "Sets of values for the same variables (e.g. ontwikkel and acceptatie). Every profile shares `vars` and has its own values in arca. Switch with `arca use <profile>`. Names are case-insensitive.",
+      "propertyNames": { "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$", "not": { "const": "policy" } },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "extends": { "type": "string", "description": "Inherit every value this profile doesn't store itself from another profile." },
+          "envFiles": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Non-sensitive config files arca loads for this profile, after the top-level envFiles and those of the profile it extends. Use names frameworks don't load themselves, like .env.acceptatie."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
     "leakGuard": {
       "type": "object",
       "properties": {

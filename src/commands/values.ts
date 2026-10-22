@@ -43,7 +43,7 @@ export async function setCommand(s: Session, opts: SetOptions): Promise<number> 
   const project = s.requireProject()
   let name = checkName(opts.name, 'npx arca set NAME')
   const fromStdin = opts.value === undefined && opts.generate === undefined && !s.io.stdinIsTTY
-  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca set ${name}`, allowPipedStdin: fromStdin })
+  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca set ${name}${s.profileFlag()}`, allowPipedStdin: fromStdin })
 
   const declared = project.config.vars
   if (!(name in declared)) {
@@ -90,30 +90,45 @@ export async function setCommand(s: Session, opts: SetOptions): Promise<number> 
     s.note(s.err('dim', `arca: ${name} is declared as config (sensitive: false). It's stored in arca anyway and arca's value wins over .env.`))
   }
   const what = opts.generate !== undefined ? 'Generated' : existed ? 'Updated' : 'Set'
-  s.note(`${s.err('green', '✔')} ${what} ${name} for ${project.config.name}${existed ? ' (previous value kept, `npx arca restore ' + name + '` undoes this)' : ''}`)
+  const undo = existed ? ` (previous value kept, \`npx arca restore ${name}${s.profileFlag()}\` undoes this)` : ''
+  s.note(`${s.err('green', '✔')} ${what} ${name} for ${s.forWhom()}${undo}`)
   return 0
+}
+
+/** Error for a name the profile only inherits, so it can't be changed or removed there. */
+function inheritedError(s: Session, name: string, from: string, verb: string): ArcaError {
+  return new ArcaError(
+    `arca: ${name} isn't stored in profile ${s.profile} itself, it's inherited from ${from}.\n` +
+      `  To ${verb} it for every profile that extends ${from}:  npx arca ${verb} ${name}${s.profileFlag(from)}`,
+  )
 }
 
 // ── unset / restore ──────────────────────────────────────────────────────
 
 export async function unsetCommand(s: Session, rawName: string | undefined): Promise<number> {
-  const project = s.requireProject()
+  s.requireProject()
   const name = checkName(rawName, 'npx arca unset NAME')
-  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca unset ${name}` })
+  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca unset ${name}${s.profileFlag()}` })
   const vault = await s.readVault()
   const v = vault.vars[name]
-  if (!v) throw new ArcaError(`arca: ${name} is not stored in arca for ${project.config.name}.`)
+  if (!v) {
+    const inherited = (await s.resolve()).get(name)
+    if (inherited) throw inheritedError(s, name, inherited.profile, 'unset')
+    throw new ArcaError(`arca: ${name} is not stored in arca for ${s.forWhom()}.`)
+  }
   vault.removed[name] = { value: v.value, updatedAt: v.updatedAt }
   delete vault.vars[name]
   await s.writeVault(vault)
-  s.note(`${s.err('green', '✔')} Removed ${name}. \`npx arca restore ${name}\` brings it back.`)
+  const fallback = (await s.resolve()).get(name)
+  s.note(`${s.err('green', '✔')} Removed ${name}${s.multiProfile ? ` from profile ${s.profile}` : ''}. \`npx arca restore ${name}${s.profileFlag()}\` brings it back.`)
+  if (fallback) s.note(s.err('dim', `  ${s.profile} now inherits ${name} from ${fallback.profile}.`))
   return 0
 }
 
 export async function restoreCommand(s: Session, rawName: string | undefined): Promise<number> {
   s.requireProject()
   const name = checkName(rawName, 'npx arca restore NAME')
-  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca restore ${name}` })
+  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca restore ${name}${s.profileFlag()}` })
   const vault = await s.readVault()
   const current = vault.vars[name]
   if (current?.previous) {
@@ -126,7 +141,9 @@ export async function restoreCommand(s: Session, rawName: string | undefined): P
   } else if (!current && vault.removed[name]) {
     storeValue(vault, name, vault.removed[name].value, 'restore')
   } else {
-    throw new ArcaError(`arca: there's no previous value of ${name} to restore.`)
+    const inherited = (await s.resolve()).get(name)
+    if (!current && inherited) throw inheritedError(s, name, inherited.profile, 'restore')
+    throw new ArcaError(`arca: there's no previous value of ${name} to restore${s.multiProfile ? ` in profile ${s.profile}` : ''}.`)
   }
   await s.writeVault(vault)
   s.note(`${s.err('green', '✔')} Restored the previous value of ${name}. Run it again to undo.`)
@@ -136,14 +153,14 @@ export async function restoreCommand(s: Session, rawName: string | undefined): P
 // ── reveal / export ──────────────────────────────────────────────────────
 
 export async function revealCommand(s: Session, rawName: string | undefined): Promise<number> {
-  const project = s.requireProject()
+  s.requireProject()
   const name = checkName(rawName, 'npx arca reveal NAME')
-  await humanGate(s.io, s.ctx, { kind: 'reveal', command: `npx arca reveal ${name}` })
-  const vault = await s.readVault()
-  const v = vault.vars[name]
+  await humanGate(s.io, s.ctx, { kind: 'reveal', command: `npx arca reveal ${name}${s.profileFlag()}` })
+  const values = await s.resolve()
+  const v = values.get(name)
   if (!v) {
-    const guess = suggest(name, Object.keys(vault.vars))
-    throw new ArcaError(`arca: ${name} is not stored in arca for ${project.config.name}.${guess ? ` Did you mean ${guess}?` : ''}`)
+    const guess = suggest(name, values.keys())
+    throw new ArcaError(`arca: ${name} is not stored in arca for ${s.forWhom()}.${guess ? ` Did you mean ${guess}?` : ''}`)
   }
   s.print(v.value)
   return 0
@@ -155,9 +172,8 @@ export async function exportCommand(s: Session, opts: { format?: string; output?
   const project = s.requireProject()
   const format = (opts.format ?? 'dotenv') as ExportFormat
   if (!['dotenv', 'json', 'shell'].includes(format)) throw new ArcaError('arca: --format must be dotenv, json or shell.', 2)
-  await humanGate(s.io, s.ctx, { kind: 'reveal', command: 'npx arca export' })
-  const vault = await s.readVault()
-  const entries = Object.entries(vault.vars).map(([k, v]) => [k, v.value] as const)
+  await humanGate(s.io, s.ctx, { kind: 'reveal', command: `npx arca export${s.profileFlag()}` })
+  const entries = [...(await s.resolve())].map(([k, v]) => [k, v.value] as const)
   let text: string
   if (format === 'json') text = JSON.stringify(Object.fromEntries(entries), null, 2)
   else if (format === 'shell') text = entries.map(([k, v]) => `export ${k}='${v.replace(/'/g, `'\\''`)}'`).join('\n')
@@ -177,16 +193,17 @@ export async function exportCommand(s: Session, opts: { format?: string; output?
 
 export async function setupCommand(s: Session, opts: { all?: boolean }): Promise<number> {
   const project = s.requireProject()
-  await humanGate(s.io, s.ctx, { kind: 'write', command: 'npx arca setup' })
+  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca setup${s.profileFlag()}` })
   const vault = await s.readVault()
+  const inherited = await s.resolve()
   const todo = Object.entries(project.config.vars).filter(
-    ([name, d]) => isSensitive(d) && !(name in vault.vars) && (opts.all || d.required),
+    ([name, d]) => isSensitive(d) && !inherited.has(name) && (opts.all || d.required),
   )
   if (todo.length === 0) {
-    s.note(`${s.err('green', '✔')} All ${opts.all ? 'declared' : 'required'} secrets are set for ${project.config.name}.`)
+    s.note(`${s.err('green', '✔')} All ${opts.all ? 'declared' : 'required'} secrets are set for ${s.forWhom()}.`)
     return 0
   }
-  s.note(`arca: ${plural(todo.length, 'variable')} to set for ${project.config.name}. Leave a prompt empty to skip it.\n`)
+  s.note(`arca: ${plural(todo.length, 'variable')} to set for ${s.forWhom()}. Leave a prompt empty to skip it.\n`)
   let set = 0
   for (const [name, d] of todo) {
     s.note(`${s.err('cyan', '◆')} ${s.err('bold', name)}${d.description ? `: ${d.description}` : ''}`)
@@ -213,7 +230,7 @@ export async function setupCommand(s: Session, opts: { all?: boolean }): Promise
   }
   const left = todo.length - set
   if (left === 0) s.note(`\n${s.err('green', '✔')} All ${opts.all ? 'declared' : 'required'} variables set. Run \`npm run dev\`.`)
-  else s.note(`\narca: set ${set}, ${left} still missing. Run \`npx arca setup\` again later.`)
+  else s.note(`\narca: set ${set}, ${left} still missing. Run \`npx arca setup${s.profileFlag()}\` again later.`)
   return left === 0 ? 0 : 1
 }
 
@@ -271,12 +288,13 @@ export function defaultImportFiles(s: Session): string[] {
 
 export async function importCommand(s: Session, opts: ImportOptions): Promise<number> {
   const project = s.requireProject()
-  await humanGate(s.io, s.ctx, { kind: 'write', command: 'npx arca import' + (opts.delete ? ' --delete' : '') })
+  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca import${s.profileFlag()}${opts.delete ? ' --delete' : ''}` })
   const files = opts.files.length ? opts.files : defaultImportFiles(s)
   if (files.length === 0) throw new ArcaError(`arca: no .env files found in ${project.root}. Name the file: npx arca import path/to/.env`)
   const plan = planImport(s, files, opts)
   if (plan.sources.length === 0) throw new ArcaError(`arca: none of these files exist: ${files.join(', ')}`)
   const vault = await s.readVault()
+  const resolved = await s.resolve()
 
   const conflicts = [...plan.secrets].filter(([k, v]) => vault.vars[k] && vault.vars[k].value !== v.value).map(([k]) => k)
   let overwrite = Boolean(opts.yes)
@@ -286,21 +304,32 @@ export async function importCommand(s: Session, opts: ImportOptions): Promise<nu
     overwrite = answer
   }
   const imported: string[] = []
+  const inheritedSame: string[] = []
+  let changed = false
   for (const [key, v] of plan.secrets) {
     if (vault.vars[key]?.value === v.value) {
       imported.push(key)
       continue
     }
+    // Same value as the profile it extends: keep inheriting instead of storing a copy.
+    const parent = resolved.get(key)
+    if (!vault.vars[key] && parent && parent.profile !== s.profile && parent.value === v.value) {
+      imported.push(key)
+      inheritedSame.push(key)
+      continue
+    }
     if (vault.vars[key] && !overwrite) continue
     storeValue(vault, key, v.value, `import:${v.file}`)
     imported.push(key)
+    changed = true
   }
-  if (imported.length) await s.writeVault(vault)
+  if (changed) await s.writeVault(vault)
 
   const undeclared = imported.filter((k) => !(k in project.config.vars))
   if (undeclared.length) declareVars(project.file, Object.fromEntries(undeclared.map((k) => [k, {}])))
 
-  s.note(`${s.err('green', '✔')} Imported ${plural(imported.length, 'secret')} into arca${imported.length ? `: ${imported.join(', ')}` : ''}`)
+  s.note(`${s.err('green', '✔')} Imported ${plural(imported.length, 'secret')} into arca${s.multiProfile ? ` (profile ${s.profile})` : ''}${imported.length ? `: ${imported.join(', ')}` : ''}`)
+  if (inheritedSame.length) s.note(s.err('dim', `  same value as the profile it extends, so still inherited: ${inheritedSame.join(', ')}`))
   if (undeclared.length) s.note(`${s.err('green', '✔')} Declared ${undeclared.join(', ')} in arca.json`)
   const config = plan.skipped.filter((x) => x.why !== 'empty')
   if (config.length) s.note(s.err('dim', `  stays in .env: ${config.map((x) => x.key).join(', ')}${opts.includePublic ? '' : ' (use --include-public or --only to import these too)'}`))

@@ -9,8 +9,13 @@ import { ArcaError } from './errors.js'
 export const CONFIG_FILE = 'arca.json'
 export const SCHEMA_REF = './node_modules/@bremmdev/arca-env/schema.json'
 
-/** Profiles aren't implemented yet. Everything uses this single set internally. */
+/** The profile a project has when arca.json declares none. */
 export const DEFAULT_PROFILE = 'default'
+
+/** Lowercase because vault files are named after profiles, on case-insensitive file systems. */
+export const PROFILE_NAME = /^[a-z0-9][a-z0-9_-]{0,39}$/
+/** `policy.vault` sits next to the profile vaults. */
+const RESERVED_PROFILES = new Set(['policy'])
 
 export type Encoding = 'base64url' | 'base64' | 'hex'
 
@@ -24,12 +29,20 @@ export interface VarDecl {
   generate?: { bytes?: number; encoding?: Encoding }
 }
 
+export interface ProfileDecl {
+  extends?: string
+  envFiles: string[]
+}
+
 export interface ArcaConfig {
   id: string
   name: string
   envFiles: string[]
   leakGuard: { ignore: string[] }
   vars: Record<string, VarDecl>
+  /** Always holds at least the default profile. */
+  profiles: Record<string, ProfileDecl>
+  defaultProfile: string
 }
 
 export interface Project {
@@ -109,9 +122,8 @@ export function parseProject(text: string, file: string): Project {
     vars[key] = parseDecl(key, value as Record<string, unknown>, fail)
   }
 
-  for (const key of ['profiles', 'defaultProfile']) {
-    if (key in o) warnings.push(`"${key}" in ${CONFIG_FILE} is ignored: profiles aren't available in this version yet.`)
-  }
+  const { profiles, defaultProfile } = parseProfiles(o, fail, warnings)
+
   const known = new Set(['$schema', 'id', 'name', 'envFiles', 'leakGuard', 'vars', 'profiles', 'defaultProfile'])
   for (const key of Object.keys(o)) if (!known.has(key)) warnings.push(`Unknown field "${key}" in ${CONFIG_FILE} is ignored.`)
 
@@ -124,6 +136,8 @@ export function parseProject(text: string, file: string): Project {
       envFiles: envFiles as string[],
       leakGuard: { ignore: ignore as string[] },
       vars,
+      profiles,
+      defaultProfile,
     },
     warnings,
   }
@@ -159,6 +173,98 @@ function parseDecl(key: string, v: Record<string, unknown>, fail: (m: string) =>
   return d
 }
 
+export function normalizeProfile(name: string): string {
+  return name.trim().toLowerCase()
+}
+
+/** Why a profile name can't be used, or null when it can. */
+export function invalidProfileName(name: string): string | null {
+  if (!PROFILE_NAME.test(name)) return `"${name}" is not a valid profile name (letters, digits, - and _, up to 40 characters)`
+  if (RESERVED_PROFILES.has(name)) return `"${name}" is reserved, pick another profile name`
+  return null
+}
+
+function parseProfiles(
+  o: Record<string, unknown>,
+  fail: (m: string) => never,
+  warnings: string[],
+): { profiles: Record<string, ProfileDecl>; defaultProfile: string } {
+  let defaultProfile: string | undefined
+  if (o.defaultProfile !== undefined) {
+    if (typeof o.defaultProfile !== 'string') fail('"defaultProfile" must be a profile name')
+    defaultProfile = normalizeProfile(o.defaultProfile as string)
+    const bad = invalidProfileName(defaultProfile)
+    if (bad) fail(`defaultProfile: ${bad}`)
+  }
+  const raw = o.profiles ?? {}
+  if (!isObject(raw)) fail('"profiles" must be an object like { "ontwikkel": {}, "acceptatie": { "extends": "ontwikkel" } }')
+
+  const profiles: Record<string, ProfileDecl> = {}
+  for (const [rawName, value] of Object.entries(raw as Record<string, unknown>)) {
+    const name = normalizeProfile(rawName)
+    const bad = invalidProfileName(name)
+    if (bad) fail(`profiles: ${bad}`)
+    if (name in profiles) fail(`profiles: "${rawName}" and another profile differ only in case. Profile names are case-insensitive.`)
+    if (!isObject(value)) fail(`profiles.${rawName} must be an object (use {} for no options)`)
+    const v = value as Record<string, unknown>
+    const decl: ProfileDecl = { envFiles: [] }
+    if (v.extends !== undefined) {
+      if (typeof v.extends !== 'string') fail(`profiles.${rawName}.extends must be a profile name`)
+      decl.extends = normalizeProfile(v.extends as string)
+    }
+    if (v.envFiles !== undefined) {
+      if (!Array.isArray(v.envFiles) || v.envFiles.some((f) => typeof f !== 'string')) fail(`profiles.${rawName}.envFiles must be an array of file names`)
+      decl.envFiles = v.envFiles as string[]
+    }
+    for (const key of Object.keys(v)) {
+      if (key !== 'extends' && key !== 'envFiles') warnings.push(`Unknown field "${key}" in profiles.${rawName} is ignored.`)
+    }
+    profiles[name] = decl
+  }
+
+  const declared = Object.keys(profiles)
+  if (declared.length === 0) {
+    const name = defaultProfile ?? DEFAULT_PROFILE
+    return { profiles: { [name]: { envFiles: [] } }, defaultProfile: name }
+  }
+  if (defaultProfile === undefined) defaultProfile = DEFAULT_PROFILE in profiles ? DEFAULT_PROFILE : declared[0]!
+  else if (!(defaultProfile in profiles)) fail(`"defaultProfile" is "${defaultProfile}", which isn't in "profiles" (${declared.join(', ')})`)
+
+  for (const [name, decl] of Object.entries(profiles)) {
+    if (decl.extends === undefined) continue
+    if (!(decl.extends in profiles)) fail(`profiles.${name} extends "${decl.extends}", which isn't in "profiles" (${declared.join(', ')})`)
+    const seen = [name]
+    for (let p: string | undefined = decl.extends; p !== undefined; p = profiles[p]!.extends) {
+      if (seen.includes(p)) fail(`profiles: "extends" loops: ${[...seen, p].join(' → ')}`)
+      seen.push(p)
+    }
+  }
+  return { profiles, defaultProfile: defaultProfile! }
+}
+
+/** The profile followed by the profiles it extends, nearest first. */
+export function profileChain(config: ArcaConfig, profile: string): string[] {
+  const chain: string[] = []
+  for (let p: string | undefined = profile; p !== undefined && !chain.includes(p); p = config.profiles[p]?.extends) chain.push(p)
+  return chain
+}
+
+/** Config files arca loads for a profile: top-level envFiles, then the chain's, the profile's own last (later files win). */
+export function profileEnvFiles(config: ArcaConfig, profile: string): string[] {
+  const files = [...config.envFiles]
+  for (const p of profileChain(config, profile).reverse()) {
+    for (const f of config.profiles[p]?.envFiles ?? []) if (!files.includes(f)) files.push(f)
+  }
+  return files
+}
+
+/** Profiles that extend `profile` directly. */
+export function profileChildren(config: ArcaConfig, profile: string): string[] {
+  return Object.entries(config.profiles)
+    .filter(([, d]) => d.extends === profile)
+    .map(([n]) => n)
+}
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
@@ -184,6 +290,27 @@ export function declareVars(file: string, decls: Record<string, VarDecl>): void 
       if (!(name in vars)) vars[name] = decl
     }
     raw.vars = vars
+  })
+}
+
+/**
+ * Adds a profile to arca.json. A file without "profiles" gets its implicit default profile
+ * written out too, so the values stored for it keep working.
+ */
+export function addProfileToConfig(project: Project, name: string, decl: { extends?: string }): void {
+  updateConfigFile(project.file, (raw) => {
+    const existing = isObject(raw.profiles) && Object.keys(raw.profiles).length > 0
+    const profiles = (existing ? raw.profiles : { [project.config.defaultProfile]: {} }) as Record<string, unknown>
+    profiles[name] = decl.extends ? { extends: decl.extends } : {}
+    raw.profiles = profiles
+  })
+}
+
+export function removeProfileFromConfig(file: string, name: string): void {
+  updateConfigFile(file, (raw) => {
+    if (!isObject(raw.profiles)) return
+    const profiles = raw.profiles as Record<string, unknown>
+    for (const key of Object.keys(profiles)) if (normalizeProfile(key) === name) delete profiles[key]
   })
 }
 

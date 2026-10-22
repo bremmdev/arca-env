@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync, appendFileSync } from 'node:fs'
 import { basename, join } from 'node:path'
-import { CONFIG_FILE, declareVars, newConfig, newProjectId, parseProject, updateConfigFile, type VarDecl } from '../config.js'
+import { CONFIG_FILE, declareVars, invalidProfileName, isSensitive, newConfig, newProjectId, normalizeProfile, parseProject, updateConfigFile, type VarDecl } from '../config.js'
 import { tokenize } from '../context.js'
-import { DEV_FILES, isTemplateFile, readEnvFile } from '../envfiles.js'
+import { DEV_FILES, isTemplateFile, readEnvFile, type EnvFile } from '../envfiles.js'
 import { ArcaError } from '../errors.js'
 import { chooseBackend } from '../keychain.js'
 import { isPublicName, secretReason } from '../leakguard.js'
@@ -141,31 +141,48 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
     for (const k of stays) decls[k] = { sensitive: false }
     declareVars(configFile, decls)
   }
-  if (otherFiles.length) step(`Left alone: ${otherFiles.join(', ')} (separate sets of values arrive with profiles in a later version)`)
+  // 2b. `.env.<name>` files hold other sets of values: offer each as a profile.
+  const plans = await planProfiles(s, configFile, otherFiles, merged, secretKeys, ask)
+  const modeFiles = otherFiles.filter((n) => MODE_FILE.test(n))
+  const leftAlone = otherFiles.filter((n) => !modeFiles.includes(n) && !plans.some((p) => p.file.name === n))
+  if (modeFiles.length) step(`Left alone: ${modeFiles.join(', ')} (framework mode files, your framework loads them itself)`)
+  if (leftAlone.length) step(`Left alone: ${leftAlone.join(', ')}`)
   ok(`${created ? 'Created' : 'Updated'} arca.json${created ? ` (id ${parseProject(readFileSync(configFile, 'utf8'), configFile).config.id})` : ''}`)
 
   // 3. Import the secret values (humans only).
   const session = new Session(io) // reload with the new arca.json
   let imported = 0
-  if (secretKeys.length && opts.import !== false) {
+  const profileImports = plans.filter((p) => p.store.size > 0)
+  if ((secretKeys.length || profileImports.length) && opts.import !== false) {
     try {
       await humanGate(io, session.ctx, { kind: 'write', command: 'npx arca import' })
       const hadKey = session.store.readGlobalConfig().keychain !== undefined
-      const vault = await session.readVault()
-      for (const k of secretKeys) {
-        const v = merged.get(k)!
-        if (v === '') continue
-        const source = [...devFiles].reverse().find((f) => f.entries.some((e) => e.key === k))?.name ?? '.env'
-        storeValue(vault, k, v, `import:${source}`)
-        imported++
+      if (secretKeys.length) {
+        const vault = await session.readVault()
+        for (const k of secretKeys) {
+          const v = merged.get(k)!
+          if (v === '') continue
+          const source = [...devFiles].reverse().find((f) => f.entries.some((e) => e.key === k))?.name ?? '.env'
+          storeValue(vault, k, v, `import:${source}`)
+          imported++
+        }
+        await session.writeVault(vault)
       }
-      await session.writeVault(vault)
+      for (const plan of profileImports) {
+        const ps = new Session(io, { profile: plan.name })
+        const vault = await ps.readVault()
+        for (const [k, v] of plan.store) storeValue(vault, k, v, `import:${plan.file.name}`)
+        await ps.writeVault(vault)
+        imported += plan.store.size
+      }
       if (!hadKey) ok(`Master key created in ${chooseBackend(session.store, io) === 'os' ? keychainLabel(io.platform) : 'a passphrase-protected file'}`)
-      ok(`Imported ${plural(imported, 'secret')} into arca`)
+      const per = profileImports.length ? ` (${[`${session.defaultProfile}: ${secretKeys.length}`, ...profileImports.map((p) => `${p.name}: ${p.store.size}`)].join(', ')})` : ''
+      ok(`Imported ${plural(imported, 'secret')} into arca${per}`)
       ok('Your .env files were not changed')
     } catch (e) {
       if (!(e instanceof ArcaError)) throw e
       s.note(`${s.err('yellow', '✋')} Moving secret values into arca needs a human. Ask the user to run:  npx arca import`)
+      for (const p of profileImports) s.note(`   and:  npx arca import ${p.file.name} --profile ${p.name}`)
       s.note('   (the .env files stay untouched)')
     }
   }
@@ -248,12 +265,98 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
   const deps = { ...pkg?.dependencies, ...pkg?.devDependencies }
   if (pkg && !deps['@bremmdev/arca-env']) s.note(`\nInstall arca in this project:  npm i -D @bremmdev/arca-env`)
   if (imported) {
-    s.note('\n' + s.err('yellow', `⚠ The ${plural(imported, 'secret')} still have plaintext copies in ${devFiles.map((f) => f.name).join(', ')}.`))
-    s.note('  Remove just those entries (config lines stay):   npx arca import --delete')
+    const withSecrets = plans.filter((p) => p.secrets.size > 0)
+    const files = [...(secretKeys.length ? devFiles.map((f) => f.name) : []), ...withSecrets.map((p) => p.file.name)]
+    s.note('\n' + s.err('yellow', `⚠ The ${plural(imported, 'secret')} still have plaintext copies in ${files.join(', ')}.`))
+    s.note('  Remove just those entries (config lines stay):')
+    if (secretKeys.length) s.note('    npx arca import --delete')
+    for (const p of withSecrets) s.note(`    npx arca import ${p.file.name} --profile ${p.name} --delete`)
   } else if (!secretKeys.length) {
     s.note('\nNext: npx arca set DATABASE_URL   or   npx arca setup')
   }
+  if (plans.length) s.note(`\nSwitch profiles with  npx arca use ${plans[0]!.name}  (and back with  npx arca use --reset)`)
   return 0
+}
+
+/** Files Next.js and Vite load by themselves, depending on the mode. Not profiles. */
+const MODE_FILE = /^\.env\.(development|production|test)(\.local)?$/
+
+interface ProfilePlan {
+  name: string
+  file: EnvFile
+  extends?: string
+  /** Every secret in the file. */
+  secrets: Map<string, string>
+  /** The secrets to store in the profile (with `extends`, only the ones that differ). */
+  store: Map<string, string>
+  config: string[]
+}
+
+/**
+ * `.env.acceptatie` → profile `acceptatie`. Secrets go into the profile's vault and config lines
+ * stay in the file, which the profile lists in `envFiles`. When the file shares most secrets with
+ * the default set (or leaves some out), the profile extends the default and stores only what differs.
+ */
+async function planProfiles(
+  s: Session,
+  configFile: string,
+  candidates: string[],
+  defaults: Map<string, string>,
+  defaultSecrets: string[],
+  ask: (q: string, initial?: boolean) => Promise<boolean>,
+): Promise<ProfilePlan[]> {
+  const config = parseProject(readFileSync(configFile, 'utf8'), configFile).config
+  const plans: ProfilePlan[] = []
+  for (const fileName of candidates) {
+    const m = /^\.env\.([A-Za-z0-9_-]+)$/.exec(fileName)
+    if (!m || MODE_FILE.test(fileName)) continue
+    const name = normalizeProfile(m[1]!)
+    if (invalidProfileName(name) || name in config.profiles) continue
+    const file = readEnvFile(join(s.io.cwd, fileName), fileName)
+    if (!file || file.entries.length === 0) continue
+
+    const secrets = new Map<string, string>()
+    const configKeys: string[] = []
+    for (const e of file.entries) {
+      if (e.value === '') continue
+      const d = config.vars[e.key]
+      const secret = d ? isSensitive(d) : defaultSecrets.includes(e.key) || Boolean(secretReason(e.key, e.value))
+      if (secret) secrets.set(e.key, e.value)
+      else configKeys.push(e.key)
+    }
+    const same = [...secrets].filter(([k, v]) => defaultSecrets.includes(k) && defaults.get(k) === v).length
+    const leavesOut = defaultSecrets.some((k) => !secrets.has(k))
+    const extend = defaultSecrets.length > 0 && (leavesOut || same * 2 >= secrets.size)
+    const store = new Map([...secrets].filter(([k, v]) => !extend || !defaultSecrets.includes(k) || defaults.get(k) !== v))
+    const how = extend
+      ? `extends ${config.defaultProfile}, ${plural(store.size, 'secret')} of its own`
+      : `${plural(secrets.size, 'secret')}`
+    if (!(await ask(`Create profile ${name} from ${fileName} (${how}${configKeys.length ? `, ${plural(configKeys.length, 'config line')} ${configKeys.length === 1 ? 'stays' : 'stay'} in the file` : ''})?`, true))) continue
+    plans.push({ name, file, extends: extend ? config.defaultProfile : undefined, secrets, store, config: configKeys })
+  }
+  if (plans.length === 0) return plans
+
+  updateConfigFile(configFile, (raw) => {
+    const existing = raw.profiles && typeof raw.profiles === 'object' && Object.keys(raw.profiles).length > 0
+    const profiles = (existing ? raw.profiles : { [config.defaultProfile]: {} }) as Record<string, unknown>
+    for (const p of plans) {
+      const decl: Record<string, unknown> = {}
+      if (p.extends) decl.extends = p.extends
+      if (p.config.length) decl.envFiles = [p.file.name]
+      profiles[p.name] = decl
+    }
+    raw.profiles = profiles
+  })
+  const decls: Record<string, VarDecl> = {}
+  for (const p of plans) {
+    for (const k of p.secrets.keys()) decls[k] ??= {}
+    for (const k of p.config) decls[k] ??= { sensitive: false }
+  }
+  declareVars(configFile, decls)
+  for (const p of plans) {
+    s.note(`${s.err('green', '✔')} Profile ${p.name}${p.extends ? ` (extends ${p.extends})` : ''}: ${p.store.size ? `${p.store.size} → arca` : 'no secrets of its own'}${p.config.length ? `, config stays in ${p.file.name}` : ''}`)
+  }
+  return plans
 }
 
 /** The arca section of an AGENTS.md: from its heading to the next heading or HTML comment block. */

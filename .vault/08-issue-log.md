@@ -20,6 +20,8 @@ Every error, bug and problem found so far, with its cause and what was done abou
 | I2 | 2026-10-22 | Build warning: tsdown `external` is deprecated | tsdown 0.22 renamed the option | `deps: { neverBundle: [...] }` | ✅ |
 | I3 | 2026-10-22 | Typecheck failed after the `npx` change (TS1005 in `main.ts`) | The new help header contained backticks inside the help text's template literal | Reworded without backticks | ✅ |
 | I4 | 2026-10-22 | One end-to-end test failed (`len=27`) | Test bug: the fake Stripe key is 26 characters | Corrected the expectation | ✅ |
+| I5 | 2026-10-22 | (profiles) Two existing tests failed after profiles landed | They asserted the old "profiles are not available yet" warning and refusal | Updated to the new behaviour: `--profile acc` now says the profile isn't declared and how to add it | ✅ |
+| I6 | 2026-10-22 | (profiles) A new test expected `NODE_ENV` to be unset in the child | vitest sets `NODE_ENV=test` in its own process, and arca passes it through | The test now checks that `NODE_ENV` is unchanged, which is the real claim (profiles don't set it) | ℹ️ |
 
 ## Found during validation (real Next.js app, real keychain, real npm)
 
@@ -31,6 +33,11 @@ Every error, bug and problem found so far, with its cause and what was done abou
 | V4 | 2026-10-22 | Checking the rendered page with `grep` found no values | React puts `<!-- -->` between text nodes, so `stripe-ok=true` became `stripe-ok=<!-- -->true` | Validation script only. The page was correct. | ℹ️ |
 | V5 | 2026-10-22 | A validation script failed with `ERR_UNSUPPORTED_ESM_URL_SCHEME … protocol 'c:'` | On Windows, an ESM import of an absolute path needs a `file:///` URL | Validation script only. The console guard already uses `pathToFileURL`, which also encodes spaces. A unit test covers a path with `Program Files`. | ℹ️ |
 | V6 | 2026-10-22 | A hand-written test `arca.json` was rejected: *"id must be an arca project ID"* | IDs use base32 (`a–z`, `2–7`), and the test ID contained `0` | Correct behaviour, and the message says what to do. Worth knowing for anyone who writes an ID by hand. | ℹ️ |
+| V7 | 2026-10-22 | (profiles, Next.js example) `arca list` said `APP_TITLE` came from `.env.local` for `acceptatie`, but the app showed the `.env.acceptatie` value | The list took the last matching file in alphabetical order. At runtime, files arca loads (`envFiles`) become process env, which beats the framework's own `.env.local`. | `list` ranks the profile's `envFiles` first. Covered by a test. | ✅ |
+| V8 | 2026-10-22 | `npx arca` status said `Secrets   2 storeds` | `plural(n, 'stored')` adds an "s" (older than profiles) | Prints `2 stored` | ✅ |
+| V9 | 2026-10-22 | (TanStack Start example) One server `console.error` echoed 64 times between the dev server and the browser console | Vite 8 forwards browser console errors to the terminal, and TanStack Devtools pipes terminal logs back to the browser. **Same result without arca** (compared on the same app). Every echo was masked. | Not arca's. The example's `/api/db` route logs with `console.log` and says why. | ℹ️ |
+| V10 | 2026-10-22 | Port 3000 was taken by another app on your machine during validation | Something else was running there | The TanStack example uses port 3124 (Next.js uses 3123) | ℹ️ |
+| V11 | 2026-10-22 | A validation helper read a different file than Git Bash had just written | Git Bash's `/tmp` is `%LOCALAPPDATA%\Temp`, Node resolves `/tmp` to `C:\tmp` | Validation scripts only: use Windows paths (`cygpath -w`) | ℹ️ |
 
 ## Found while designing (in these docs)
 
@@ -48,7 +55,10 @@ Every error, bug and problem found so far, with its cause and what was done abou
 | O2 | Ctrl+C on `npm run dev` in a real terminal: does any `node.exe` stay behind? Only a killed process tree was tested. | ⏳ needs you |
 | O3 | Colours, Vite shortcuts and interactive prompts through the masking pipe (spike S2) | ⏳ needs you |
 | O4 | The human prompts (`init`, `set`, `setup`) in a real terminal. Validation simulated them. | ⏳ needs you |
-| O5 | The console guard in a full TanStack Start app (does `--import` in `NODE_OPTIONS` disturb the dev server?) | ⏳ needs you |
+| O5 | The console guard in a full TanStack Start app (does `--import` in `NODE_OPTIONS` disturb the dev server?) | ✅ dev server checked 2026-10-22 in `examples/tanstack-start` (TanStack Start 1.169, Vite 8, Devtools on): starts normally, browser console gets `[arca:NAME]`. `vite build` not checked yet. |
 | O6 | Lifecycle variables under pnpm, yarn and bun (spike S4), and markers of agents other than Claude Code (spike S3) | ⏳ |
 | O7 | `package.json` says `MIT`, but there's no `LICENSE` file, and the license wasn't your explicit choice | ⏳ |
 | O8 | The tests leave temporary folders in the OS temp directory | ⏳ minor |
+| O9 | `npx arca --version` prints `0.1.0` (hard-coded in `main.ts`), while `package.json` says `0.1.2` | ⏳ minor, older than profiles |
+| O10 | `publish.yml` publishes on **every push to `main`**. Profiles is a new feature, so bump the version (to 0.2.0?) before pushing, or the publish will fail on the existing 0.1.2 | ⏳ needs you |
+| O11 | The profile prompts in `arca init`, and `profiles copy` / `profiles rm` confirmations, in a real terminal. Validation simulated them. | ⏳ needs you |

@@ -7,6 +7,7 @@ import { Session } from './session.js'
 import { suggest } from './util.js'
 import { checkCommand, doctorCommand, listCommand, policyCommand, projectsCommand, statusCommand } from './commands/info.js'
 import { initCommand } from './commands/init.js'
+import { profilesCommand, useCommand } from './commands/profiles.js'
 import { exportCommand, importCommand, restoreCommand, revealCommand, setCommand, setupCommand, unsetCommand } from './commands/values.js'
 
 export const VERSION = '0.1.0'
@@ -22,7 +23,16 @@ Everyday
                           --no-override   let values inherited from the shell win over arca
   list, ls                Variables and where each one comes from (names only, never values)
   check [--strict]        Exit 1 if required variables are missing (--strict: also on leak-guard findings)
+        [--all-profiles]
   doctor                  Diagnose keychain, project, scripts and .env files
+
+Profiles (sets of values for the same variables, e.g. ontwikkel and acceptatie)
+  use [profile]           Show or switch the active profile for every arca run of this project
+  use --reset             Back to the default profile
+  profiles                List profiles: active, extends, values set, missing
+  profiles add <name> [--extends p]           profiles diff <a> <b>   (names only)
+  profiles copy <from> <to> [--only A,B]      profiles rm <name>      (person only)
+  Every value command takes --profile <name> (-p). ARCA_PROFILE=<name> picks one for a terminal.
 
 Values (only a person at a terminal)
   set NAME [--generate]   Store a value (hidden prompt, or piped: … | arca set NAME)
@@ -58,7 +68,7 @@ function parse(args: string[], options: ParseArgsConfig['options'] = {}): { valu
   }
 }
 
-const COMMANDS = ['run', 'list', 'ls', 'check', 'doctor', 'set', 'setup', 'unset', 'restore', 'reveal', 'export', 'import', 'init', 'policy', 'projects', 'help', 'version']
+const COMMANDS = ['run', 'list', 'ls', 'check', 'doctor', 'set', 'setup', 'unset', 'restore', 'reveal', 'export', 'import', 'init', 'use', 'profiles', 'profile', 'policy', 'projects', 'help', 'version']
 
 export async function main(argv: string[], io: IO): Promise<number> {
   try {
@@ -84,7 +94,7 @@ async function dispatch(argv: string[], io: IO): Promise<number> {
     return 0
   }
   if (command === undefined || (command.startsWith('-') && command !== '--')) {
-    const { values } = parse(argv)
+    const { values } = parse(argv, profileOption)
     return statusCommand(session(io, values), VERSION)
   }
   if (command === 'run' || command === '--') return run(command === '--' ? ['--', ...rest] : rest, io)
@@ -100,12 +110,26 @@ async function dispatch(argv: string[], io: IO): Promise<number> {
       return listCommand(session(io, values))
     }
     case 'check': {
-      const { values } = parse(rest, { strict: { type: 'boolean' }, ...profileOption })
-      return checkCommand(session(io, values), { strict: Boolean(values.strict) })
+      const { values } = parse(rest, { strict: { type: 'boolean' }, 'all-profiles': { type: 'boolean' }, ...profileOption })
+      return checkCommand(session(io, values), { strict: Boolean(values.strict), allProfiles: Boolean(values['all-profiles']) })
     }
     case 'doctor': {
-      const { values } = parse(rest)
+      const { values } = parse(rest, profileOption)
       return doctorCommand(session(io, values))
+    }
+    case 'use': {
+      const { values, positionals } = parse(rest, { reset: { type: 'boolean' } })
+      if (positionals.length > 1) throw new ArcaError('arca: too many arguments. Usage: npx arca use [profile] | npx arca use --reset', EXIT_USAGE)
+      return useCommand(session(io, values), { profile: positionals[0], reset: Boolean(values.reset) })
+    }
+    case 'profile':
+    case 'profiles': {
+      const { values, positionals } = parse(rest, { extends: { type: 'string' }, only: { type: 'string' }, yes: { type: 'boolean', short: 'y' } })
+      return profilesCommand(session(io, values), positionals, {
+        extends: values.extends as string | undefined,
+        only: splitList(values.only),
+        yes: Boolean(values.yes),
+      })
     }
     case 'set': {
       const normalized = rest.map((a) => (a === '--generate' || a === '-g' ? '--generate=default' : a))
@@ -171,7 +195,6 @@ async function dispatch(argv: string[], io: IO): Promise<number> {
   return EXIT_USAGE
 }
 
-// Profiles aren't implemented yet; accept the flag only to explain that.
 const profileOption = { profile: { type: 'string', short: 'p' } } satisfies ParseArgsConfig['options']
 
 function session(io: IO, values: Values): Session {
@@ -179,10 +202,7 @@ function session(io: IO, values: Values): Session {
     io.stdout.write(HELP + '\n')
     throw new ArcaError('', 0)
   }
-  if (values.profile !== undefined) {
-    throw new ArcaError('arca: profiles are not available in this version yet. Every command uses the project\'s single set of values.', EXIT_USAGE)
-  }
-  const s = new Session(io, { projectDir: values['project-dir'] as string | undefined })
+  const s = new Session(io, { projectDir: values['project-dir'] as string | undefined, profile: values.profile as string | undefined })
   s.json = Boolean(values.json)
   s.quiet = Boolean(values.quiet)
   return s

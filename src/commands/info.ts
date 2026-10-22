@@ -1,15 +1,15 @@
 import { existsSync, readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
-import { isSensitive } from '../config.js'
+import { join, relative, resolve } from 'node:path'
+import { DEFAULT_PROFILE, isSensitive } from '../config.js'
 import { isTemplateFile, loadEnvFiles } from '../envfiles.js'
 import { ArcaError } from '../errors.js'
 import { chooseBackend, loadMasterKey } from '../keychain.js'
 import { scanEnvFiles, type Finding } from '../leakguard.js'
 import { humanGate } from '../policy.js'
 import { MIN_NEEDLE_LENGTH } from '../redact.js'
-import { gitRemote, type Session } from '../session.js'
+import { gitRemote, type ResolvedVar, type Session } from '../session.js'
 import type { AgentRunPolicy, VaultData } from '../store.js'
-import { pad, type Paint } from '../style.js'
+import { pad, type Paint, type Style } from '../style.js'
 import { plural, shortDate } from '../util.js'
 import { KNOWN_TOOLS, firstCommand } from './init.js'
 
@@ -19,6 +19,9 @@ interface Row {
   name: string
   status: 'arca' | 'env-file' | 'env-file-sensitive' | 'missing' | 'unset'
   source?: string
+  /** For values from arca: the profile that stores it (differs from the row's profile when inherited). */
+  profile?: string
+  inherited?: boolean
   sensitive: boolean
   required: boolean
   declared: boolean
@@ -26,19 +29,23 @@ interface Row {
   description?: string
 }
 
-function rows(s: Session, vault: VaultData): Row[] {
+function rows(s: Session, values: Map<string, ResolvedVar>, profile = s.profile): Row[] {
   const project = s.requireProject()
   const decls = project.config.vars
-  const files = s.envFilesForGuard().filter((f) => !isTemplateFile(f.name))
-  const inFile = (name: string) => files.find((f) => f.entries.some((e) => e.key === name && e.value !== ''))
-  const names = [...new Set([...Object.keys(decls), ...Object.keys(vault.vars)])]
+  const files = s.envFilesFor(profile).filter((f) => !isTemplateFile(f.name))
+  // Files arca loads become process env, which beats the files a framework loads itself.
+  // Among arca's own envFiles, later ones win.
+  const loaded = s.envFiles(profile).map((f) => resolve(project.root, f))
+  const ranked = [...files].sort((a, b) => loaded.indexOf(b.path) - loaded.indexOf(a.path))
+  const inFile = (name: string) => ranked.find((f) => f.entries.some((e) => e.key === name && e.value !== ''))
+  const names = [...new Set([...Object.keys(decls), ...values.keys()])]
   return names.map((name) => {
     const d = decls[name]
-    const stored = vault.vars[name]
+    const stored = values.get(name)
     const sensitive = isSensitive(d)
     const file = inFile(name)
     const base = { name, sensitive, required: Boolean(d?.required), declared: Boolean(d), description: d?.description }
-    if (stored) return { ...base, status: 'arca', updatedAt: stored.updatedAt }
+    if (stored) return { ...base, status: 'arca', profile: stored.profile, inherited: stored.profile !== profile, updatedAt: stored.updatedAt }
     if (file) return { ...base, status: sensitive ? 'env-file-sensitive' : 'env-file', source: relative(project.root, file.path) || file.name }
     return { ...base, status: d?.required ? 'missing' : 'unset' }
   })
@@ -47,7 +54,7 @@ function rows(s: Session, vault: VaultData): Row[] {
 function statusText(r: Row, p: Paint): string {
   switch (r.status) {
     case 'arca':
-      return p('green', '✔ arca')
+      return r.inherited ? p('green', `✔ arca ↳ ${r.profile}`) : p('green', '✔ arca')
     case 'env-file':
       return p('cyan', `✔ ${r.source}`)
     case 'env-file-sensitive':
@@ -62,17 +69,19 @@ function statusText(r: Row, p: Paint): string {
 export async function listCommand(s: Session): Promise<number> {
   const project = s.requireProject()
   s.warnConfig()
-  const vault = await s.readVault()
-  const list = rows(s, vault)
+  const values = await s.resolve()
+  const list = rows(s, values)
   if (s.json) {
-    s.print(JSON.stringify(list.map(({ description, ...r }) => ({ ...r, description: description ?? null })), null, 2))
+    s.print(JSON.stringify(list.map(({ description, inherited, ...r }) => ({ ...r, description: description ?? null })), null, 2))
     return 0
   }
   const p = s.out
   if (list.length === 0) {
-    s.print(`No variables declared or stored for ${project.config.name} yet. Declare them in arca.json, then run \`npx arca setup\`.`)
+    s.print(`No variables declared or stored for ${s.forWhom()} yet. Declare them in arca.json, then run \`npx arca setup${s.profileFlag()}\`.`)
     return 0
   }
+  // Several profiles and none picked explicitly: one column per profile.
+  if (s.multiProfile && s.profileSource !== 'flag') return listMatrix(s)
   const w = Math.max(4, ...list.map((r) => r.name.length)) + 2
   const sw = Math.max(...list.map((r) => statusText(r, (_, t) => t).length)) + 2
   s.print(p('bold', `${pad('NAME', w)}${pad('STATUS', sw)}${pad('KIND', 9)}UPDATED`))
@@ -84,41 +93,115 @@ export async function listCommand(s: Session): Promise<number> {
   return 0
 }
 
+/**
+ * The `arca list` matrix:
+ *                  ontwikkel ●    acceptatie         test
+ *   DATABASE_URL   ✔ set          ✔ set              ↳ ontwikkel
+ */
+async function listMatrix(s: Session): Promise<number> {
+  const p = s.out
+  const profiles = s.profiles
+  const tables = new Map<string, Map<string, Row>>()
+  for (const profile of profiles) tables.set(profile, new Map(rows(s, await s.resolve(profile), profile).map((r) => [r.name, r])))
+  const names = [...new Set([...tables.values()].flatMap((t) => [...t.keys()]))]
+  const cell = (r: Row | undefined): [string, Style] => {
+    if (!r) return ['–', 'dim']
+    if (r.status === 'arca') return r.inherited ? [`↳ ${r.profile}`, 'green'] : ['✔ set', 'green']
+    if (r.status === 'env-file') return [r.source!, 'cyan']
+    if (r.status === 'env-file-sensitive') return [`⚠ ${r.source}`, 'yellow']
+    if (r.status === 'missing') return ['✖ missing', 'red']
+    return ['–', 'dim']
+  }
+  const heads = profiles.map((x) => (x === s.profile ? `${x} ●` : x))
+  const w = Math.max(4, ...names.map((n) => n.length)) + 2
+  const widths = profiles.map((x, i) => Math.max(heads[i]!.length, ...names.map((n) => cell(tables.get(x)!.get(n))[0].length)) + 3)
+  s.print(p('bold', (pad('', w) + heads.map((h, i) => pad(h, widths[i]!)).join('')).trimEnd()))
+  for (const name of names) {
+    const cells = profiles.map((x, i) => {
+      const [text, color] = cell(tables.get(x)!.get(name))
+      return pad(p(color, text), widths[i]!)
+    })
+    const declared = [...tables.values()].some((t) => t.get(name)?.declared)
+    s.print(`${pad(name, w)}${cells.join('')}${declared ? '' : p('dim', '(undeclared)')}`.trimEnd())
+  }
+  s.print(p('dim', `\n● active profile: ${s.profile}${activeWhy(s)}. Switch with \`npx arca use <profile>\`.`))
+  return 0
+}
+
+/** " (via arca use)", " (the default)", or nothing when the profile is literally called "default". */
+export function activeWhy(s: Session): string {
+  if (s.profileSource !== 'default') return ` (via ${sourceLabel(s)})`
+  return s.profile === DEFAULT_PROFILE ? '' : ' (the default)'
+}
+
+export function sourceLabel(s: Session): string {
+  return s.profileSource === 'flag' ? '--profile' : s.profileSource === 'env' ? 'ARCA_PROFILE' : s.profileSource === 'use' ? 'arca use' : 'default'
+}
+
 // ── check ────────────────────────────────────────────────────────────────
 
-export async function checkCommand(s: Session, opts: { strict?: boolean }): Promise<number> {
+interface CheckResult {
+  profile: string
+  required: number
+  missing: string[]
+  misplaced: string[]
+  undeclared: string[]
+}
+
+async function checkProfile(s: Session, profile: string): Promise<CheckResult> {
   const project = s.requireProject()
-  s.warnConfig()
-  const vault = await s.readVault()
-  const files = s.envFilesForGuard().filter((f) => !isTemplateFile(f.name))
-  const envFileValues = loadEnvFiles(project.root, project.config.envFiles)
+  const values = await s.resolve(profile)
+  const files = s.envFilesFor(profile).filter((f) => !isTemplateFile(f.name))
+  const envFileValues = loadEnvFiles(project.root, s.envFiles(profile))
   const present = (name: string) =>
-    name in vault.vars ||
+    values.has(name) ||
     Boolean(s.io.env[name]) ||
     Boolean(envFileValues[name]) ||
     files.some((f) => f.entries.some((e) => e.key === name && e.value !== ''))
   const required = Object.entries(project.config.vars).filter(([, d]) => d.required)
-  const missing = required.filter(([n]) => !present(n)).map(([n]) => n)
-  const misplaced = required.filter(([n, d]) => isSensitive(d) && !(n in vault.vars) && !s.io.env[n] && present(n)).map(([n]) => n)
-  const findings = scanEnvFiles(project, s.envFilesForGuard(), s.secrets(vault))
-  const undeclared = Object.keys(vault.vars).filter((n) => !(n in project.config.vars))
+  return {
+    profile,
+    required: required.length,
+    missing: required.filter(([n]) => !present(n)).map(([n]) => n),
+    misplaced: required.filter(([n, d]) => isSensitive(d) && !values.has(n) && !s.io.env[n] && present(n)).map(([n]) => n),
+    undeclared: [...values.keys()].filter((n) => !(n in project.config.vars)),
+  }
+}
+
+export async function checkCommand(s: Session, opts: { strict?: boolean; allProfiles?: boolean }): Promise<number> {
+  const project = s.requireProject()
+  s.warnConfig()
+  const results: CheckResult[] = []
+  for (const profile of opts.allProfiles ? s.profiles : [s.profile]) results.push(await checkProfile(s, profile))
+  const findings = scanEnvFiles(project, s.envFilesForGuard(), await s.allSecrets())
+  const missingAny = results.some((r) => r.missing.length > 0)
 
   if (s.json) {
-    s.print(JSON.stringify({ ok: missing.length === 0 && (!opts.strict || findings.length === 0), missing, inEnvFiles: misplaced, undeclared, leakGuard: findings }, null, 2))
+    const ok = !missingAny && (!opts.strict || findings.length === 0)
+    if (opts.allProfiles) {
+      const profiles = Object.fromEntries(results.map(({ profile, required, ...r }) => [profile, { ok: r.missing.length === 0, ...r }]))
+      s.print(JSON.stringify({ ok, profiles, leakGuard: findings }, null, 2))
+    } else {
+      const r = results[0]!
+      s.print(JSON.stringify({ ok, profile: r.profile, missing: r.missing, inEnvFiles: r.misplaced, undeclared: r.undeclared, leakGuard: findings }, null, 2))
+    }
   } else {
     const p = s.out
-    if (missing.length === 0) s.print(`${p('green', '✔')} All ${plural(required.length, 'required variable')} set for ${project.config.name}`)
-    else {
-      s.print(`${p('red', '✖')} ${plural(missing.length, 'required variable')} missing for ${project.config.name}: ${missing.join(', ')}`)
-      s.print(`  Run \`npx arca setup\` to set them. (AI agents: ask the user to run it.)`)
+    for (const r of results) {
+      const who = s.forWhom(r.profile)
+      if (r.missing.length === 0) s.print(`${p('green', '✔')} All ${plural(r.required, 'required variable')} set for ${who}`)
+      else {
+        s.print(`${p('red', '✖')} ${plural(r.missing.length, 'required variable')} missing for ${who}: ${r.missing.join(', ')}`)
+        s.print(`  Run \`npx arca setup${s.profileFlag(r.profile)}\` to set them. (AI agents: ask the user to run it.)`)
+      }
+      for (const n of r.misplaced) s.print(`${p('yellow', '⚠')} ${n} is a secret but comes from a .env file. Move it: npx arca import --only ${n} --delete${s.profileFlag(r.profile)}`)
+      if (r.undeclared.length) s.print(p('dim', `  stored but not declared in arca.json: ${r.undeclared.join(', ')}`))
     }
-    for (const n of misplaced) s.print(`${p('yellow', '⚠')} ${n} is a secret but comes from a .env file. Move it: npx arca import --only ${n} --delete`)
-    if (undeclared.length) s.print(p('dim', `  stored but not declared in arca.json: ${undeclared.join(', ')}`))
     if (findings.length) {
       s.print(`${p('yellow', '⚠')} Leak guard: ${plural(findings.length, 'possible secret')} in .env files (run \`npx arca doctor\` for details)`)
     }
   }
-  if (missing.length) return 1
+  if (missingAny) return 1
   if (opts.strict && findings.length) return 1
   return 0
 }
@@ -168,9 +251,6 @@ export async function doctorCommand(s: Session): Promise<number> {
   info(`${project.config.name} (${project.config.id})`)
   info(`Config: ${project.file}`)
   for (const w of project.warnings) warn(w)
-  const vault = master && s.hasVault() ? s.store.readVault(master, project.config.id, s.profile) : null
-  if (s.hasVault()) ok(`Vault: ${plural(Object.keys(vault?.vars ?? {}).length, 'secret')} stored`)
-  else info('No secrets stored for this project on this machine yet')
   const reg = s.store.readRegistry()[project.config.id]
   const remote = gitRemote(project.root)
   if (reg?.gitRemote && remote && reg.gitRemote !== remote) {
@@ -178,11 +258,29 @@ export async function doctorCommand(s: Session): Promise<number> {
     problems++
   }
 
+  s.print(p('bold', s.multiProfile ? '\nProfiles' : '\nVault'))
+  if (s.multiProfile) info(`Active: ${s.profile} (${sourceLabel(s)})${s.staleActiveProfile ? `; \`arca use\` points at "${s.staleActiveProfile}", which no longer exists` : ''}`)
   const decls = project.config.vars
-  const short = Object.entries(vault?.vars ?? {}).filter(([n, v]) => isSensitive(decls[n]) && v.value.length < MIN_NEEDLE_LENGTH)
-  for (const [n] of short) warn(`${n} is shorter than ${MIN_NEEDLE_LENGTH} characters, so it isn't masked in output`)
-  const missing = Object.entries(decls).filter(([n, d]) => d.required && isSensitive(d) && !vault?.vars[n]).map(([n]) => n)
-  if (missing.length) warn(`Required secrets not stored: ${missing.join(', ')}. Run \`npx arca setup\`.`)
+  let active: Map<string, ResolvedVar> | null = null
+  for (const profile of s.profiles) {
+    const label = s.multiProfile ? `${profile}: ` : ''
+    if (!s.hasVault(profile)) {
+      info(`${label}no secrets stored on this machine yet`)
+      const missing = Object.entries(decls).filter(([, d]) => d.required && isSensitive(d)).map(([n]) => n)
+      if (missing.length) warn(`${label}required secrets not stored: ${missing.join(', ')}. Run \`npx arca setup${s.profileFlag(profile)}\`.`)
+      continue
+    }
+    if (!master) continue
+    const values = await s.resolve(profile)
+    if (profile === s.profile) active = values
+    const own = [...values.values()].filter((v) => v.profile === profile).length
+    const inherited = values.size - own
+    ok(`${label}${plural(own, 'secret')} stored${inherited ? `, ${inherited} inherited` : ''}`)
+    const short = [...values].filter(([n, v]) => v.profile === profile && isSensitive(decls[n]) && v.value.length < MIN_NEEDLE_LENGTH)
+    for (const [n] of short) warn(`${label}${n} is shorter than ${MIN_NEEDLE_LENGTH} characters, so it isn't masked in output`)
+    const missing = Object.entries(decls).filter(([n, d]) => d.required && isSensitive(d) && !values.has(n)).map(([n]) => n)
+    if (missing.length) warn(`${label}required secrets not stored: ${missing.join(', ')}. Run \`npx arca setup${s.profileFlag(profile)}\`.`)
+  }
 
   // package.json scripts
   const pkgFile = join(s.packageRoot() ?? project.root, 'package.json')
@@ -199,7 +297,8 @@ export async function doctorCommand(s: Session): Promise<number> {
   }
 
   // envFiles pitfalls
-  const modeFiles = project.config.envFiles.filter((f) => /^\.env\.(development|production|test)(\.local)?$/.test(f))
+  const allEnvFiles = [...project.config.envFiles, ...Object.values(project.config.profiles).flatMap((x) => x.envFiles)]
+  const modeFiles = [...new Set(allEnvFiles)].filter((f) => /^\.env\.(development|production|test)(\.local)?$/.test(f))
   for (const f of modeFiles) {
     warn(`envFiles lists ${f}. arca injects it as process env, which beats the framework's own mode files (e.g. in \`next build\`). Prefer a name frameworks don't load.`)
   }
@@ -207,7 +306,7 @@ export async function doctorCommand(s: Session): Promise<number> {
   // leak guard
   s.print(p('bold', '\nLeak guard (.env files)'))
   const files = s.envFilesForGuard()
-  const findings = scanEnvFiles(project, files, vault ? s.secrets(vault) : [])
+  const findings = scanEnvFiles(project, files, master ? await s.allSecrets() : [])
   if (files.length === 0) info('No .env files')
   else if (findings.length === 0) ok(`${plural(files.length, 'file')} checked, no secrets found: ${files.map((f) => f.name).join(', ')}`)
   for (const f of findings) {
@@ -218,11 +317,12 @@ export async function doctorCommand(s: Session): Promise<number> {
   }
 
   // credential-receiving URLs in .env
-  const secretPrefixes = new Set(Object.keys(vault?.vars ?? {}).map((n) => n.split('_')[0]))
+  const stored = active ?? new Map<string, ResolvedVar>()
+  const secretPrefixes = new Set([...stored.keys()].map((n) => n.split('_')[0]))
   for (const file of files) {
     for (const e of file.entries) {
       if (!/^https?:\/\//i.test(e.value) || decls[e.key]?.sensitive === true) continue
-      if (secretPrefixes.has(e.key.split('_')[0]) && !(e.key in (vault?.vars ?? {}))) {
+      if (secretPrefixes.has(e.key.split('_')[0]) && !stored.has(e.key)) {
         info(`${e.key} in ${file.name} is a URL next to the secret ${e.key.split('_')[0]}_… If it receives that credential, keep it in arca so only you can change it.`)
       }
     }
@@ -263,16 +363,17 @@ export async function statusCommand(s: Session, version: string): Promise<number
   }
   s.warnConfig()
   const project = s.project
-  const vault = await s.readVault()
-  const list = rows(s, vault)
+  const values = await s.resolve()
+  const list = rows(s, values)
   const missing = list.filter((r) => r.status === 'missing').map((r) => r.name)
   s.print(`\nProject   ${project.config.name} (${project.config.id})`)
-  s.print(`Secrets   ${plural(Object.keys(vault.vars).length, 'stored')}${missing.length ? p('red', `, missing: ${missing.join(', ')}`) : ''}`)
+  if (s.multiProfile) s.print(`Profile   ${s.profile}${activeWhy(s)}  ${p('dim', `(profiles: ${s.profiles.join(', ')})`)}`)
+  s.print(`Secrets   ${values.size} stored${missing.length ? p('red', `, missing: ${missing.join(', ')}`) : ''}`)
   const policy = await s.policy()
   s.print(`Agents    ${policy.agentRun === 'scripts' ? 'package scripts only, output masked' : 'denied'}`)
   s.print(`You       ${s.ctx.agent.detected ? `AI agent (${s.ctx.agent.name} via ${s.ctx.agent.via})` : s.ctx.interactiveOutput ? 'interactive terminal' : 'non-interactive'}`)
   s.print(`Store     ${s.store.root}`)
-  s.print(`\n${missing.length ? 'Next: npx arca setup' : 'Run your app as usual, e.g. npm run dev'}    ·    npx arca help`)
+  s.print(`\n${missing.length ? `Next: npx arca setup${s.profileFlag()}` :'Run your app as usual, e.g. npm run dev'}    ·    npx arca help`)
   return 0
 }
 

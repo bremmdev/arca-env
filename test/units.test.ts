@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseEnv as nodeParseEnv } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { parseProject } from '../src/config.js'
+import { parseProject, profileChain, profileEnvFiles } from '../src/config.js'
 import { arcaRunCommands, detectAgent, verifyScript } from '../src/context.js'
 import { newMasterKey, open, seal, unwrapMasterKey, vaultKey, wrapMasterKey } from '../src/crypto.js'
 import { parseEnv, removeEntries } from '../src/envfiles.js'
@@ -191,7 +191,34 @@ describe('arca.json', () => {
     expect(() => parseProject('{"id":"nope"}', 'arca.json')).toThrow(/"id"/)
     expect(() => parseProject('{"id":"arc_aaaaaaaaaaaaaaaa","vars":{"A":{"default":"x"}}}', 'arca.json')).toThrow(/names only/)
     const p = parseProject('{"id":"arc_aaaaaaaaaaaaaaaa","profiles":{}}', 'x/arca.json')
-    expect(p.warnings[0]).toMatch(/profiles/)
+    expect(p.warnings).toEqual([])
+    expect(p.config.profiles).toEqual({ default: { envFiles: [] } })
+    expect(p.config.defaultProfile).toBe('default')
+  })
+
+  const parse = (o: Record<string, unknown>) => parseProject(JSON.stringify({ id: 'arc_aaaaaaaaaaaaaaaa', ...o }), 'x/arca.json')
+
+  it('reads profiles: lowercase names, extends, envFiles, the default', () => {
+    const p = parse({ defaultProfile: 'Ontwikkel', profiles: { ONTWIKKEL: {}, Acceptatie: { extends: 'ontwikkel', envFiles: ['.env.acceptatie'] }, test: { extends: 'acceptatie' } }, envFiles: ['.env.shared'] })
+    expect(p.config.defaultProfile).toBe('ontwikkel')
+    expect(Object.keys(p.config.profiles)).toEqual(['ontwikkel', 'acceptatie', 'test'])
+    expect(profileChain(p.config, 'test')).toEqual(['test', 'acceptatie', 'ontwikkel'])
+    expect(profileEnvFiles(p.config, 'test')).toEqual(['.env.shared', '.env.acceptatie'])
+    expect(profileEnvFiles(p.config, 'ontwikkel')).toEqual(['.env.shared'])
+    // Without defaultProfile: "default" if declared, otherwise the first profile.
+    expect(parse({ profiles: { a: {}, default: {} } }).config.defaultProfile).toBe('default')
+    expect(parse({ profiles: { a: {}, b: {} } }).config.defaultProfile).toBe('a')
+    expect(parse({ defaultProfile: 'main' }).config.profiles).toEqual({ main: { envFiles: [] } })
+  })
+
+  it('rejects broken profiles', () => {
+    expect(() => parse({ profiles: { a: {}, A: {} } })).toThrow(/differ only in case/)
+    expect(() => parse({ profiles: { a: { extends: 'nope' } } })).toThrow(/extends "nope"/)
+    expect(() => parse({ profiles: { a: { extends: 'b' }, b: { extends: 'a' } } })).toThrow(/loops: a → b → a/)
+    expect(() => parse({ profiles: { a: {} }, defaultProfile: 'b' })).toThrow(/isn't in "profiles"/)
+    expect(() => parse({ profiles: { policy: {} } })).toThrow(/reserved/)
+    expect(() => parse({ profiles: { 'has space': {} } })).toThrow(/not a valid profile name/)
+    expect(parse({ profiles: { a: { color: 'red' } } }).warnings[0]).toMatch(/Unknown field "color" in profiles.a/)
   })
 })
 

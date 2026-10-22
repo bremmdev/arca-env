@@ -21,7 +21,7 @@ import { ArcaError } from './errors.js'
 //   config.json      global, non-secret prefs
 //   registry.json    non-secret: id -> name, roots, git remote, lastUsed
 //   master.key.enc   passphrase mode only
-//   projects/<id>/<profile>.vault (+ .bak), policy.vault
+//   projects/<id>/<profile>.vault (+ .bak), policy.vault, state.json (active profile)
 
 export interface VaultVar {
   value: string
@@ -41,6 +41,11 @@ export type AgentRunPolicy = 'scripts' | 'deny'
 
 export interface PolicyData {
   agentRun: AgentRunPolicy
+}
+
+export interface ProjectState {
+  activeProfile?: string
+  setAt?: string
 }
 
 export interface GlobalConfig {
@@ -93,6 +98,47 @@ export class Store {
       }
     }
     return false
+  }
+
+  /** Profiles with a vault file for this project. */
+  vaultProfiles(id: string): string[] {
+    const dir = this.projectDir(id)
+    if (!existsSync(dir)) return []
+    return readdirSync(dir)
+      .filter((f) => f.endsWith('.vault') && f !== 'policy.vault')
+      .map((f) => f.slice(0, -'.vault'.length))
+  }
+
+  removeVault(id: string, profile: string): void {
+    this.withLock(id, () => {
+      const file = this.vaultFile(id, profile)
+      rmSync(file, { force: true })
+      rmSync(`${file}.bak`, { force: true })
+    })
+  }
+
+  // ── active profile (`arca use`), plaintext because it isn't secret ─────────
+
+  stateFile(id: string): string {
+    return join(this.projectDir(id), 'state.json')
+  }
+
+  readState(id: string): ProjectState {
+    const file = this.stateFile(id)
+    if (!existsSync(file)) return {}
+    try {
+      const data = JSON.parse(readFileSync(file, 'utf8')) as ProjectState
+      return typeof data.activeProfile === 'string' ? data : {}
+    } catch {
+      return {}
+    }
+  }
+
+  writeState(id: string, state: ProjectState): void {
+    this.withLock(id, () => {
+      if (state.activeProfile === undefined) rmSync(this.stateFile(id), { force: true })
+      else atomicWrite(this.stateFile(id), JSON.stringify(state, null, 2) + '\n')
+    })
   }
 
   projectIds(): string[] {

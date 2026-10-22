@@ -253,12 +253,12 @@ describe('teammates, CI and edge cases', () => {
     expect(io.err()).toContain('no arca.json found')
   })
 
-  it('reports unknown commands and the profile flag clearly', async () => {
+  it('reports unknown commands and unknown profiles clearly', async () => {
     const h = project()
     expect((await h.human(['lst'])).io.err()).toContain('Did you mean `npx arca list`')
     const p = await h.human(['run', '--profile', 'acc', '--', 'node', 'print.js'])
     expect(p.code).toBe(2)
-    expect(p.io.err()).toContain('profiles are not available in this version yet')
+    expect(p.io.err()).toContain('profile "acc" (from --profile) isn\'t declared in arca.json. acme-web has one profile (default)')
   })
 
   it('an agent-run init scaffolds config but leaves the values to a human', async () => {

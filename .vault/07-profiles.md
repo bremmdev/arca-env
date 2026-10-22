@@ -159,3 +159,19 @@ The AGENTS.md snippet gains one line: *"The active profile (set of values) is sh
 6. **Masking covers values from all profiles**, not just the active one.
 7. **One vault file per profile.**
 8. **Profile names are case-insensitive**, because vault files live on case-insensitive file systems.
+
+## Implementation notes (built 2026-10-22)
+
+Profiles are implemented as described above. Calls made while building it that this doc didn't settle (flag any you disagree with):
+
+1. **A project without `profiles` has one profile called `default`.** That's the name the vault file already had (`default.vault`), so existing projects keep working unchanged. `defaultProfile` falls back to `default` if declared, otherwise to the first profile in `profiles`.
+2. **Values stored before profiles move automatically.** When `arca.json` names another default profile (say `ontwikkel`) and doesn't declare `default`, the first command that reads values re-encrypts `default.vault` as `ontwikkel.vault` and removes the old file, with a one-line note. Tested in the real Next.js example.
+3. **`policy` is a reserved profile name**, because `policy.vault` sits next to the profile vaults. Names are 1 to 40 characters: letters, digits, `-` and `_`.
+4. **`arca use <default profile>` is the same as `arca use --reset`**: it clears `state.json`, so a later change of `defaultProfile` is followed.
+5. **`ARCA_PROFILE` from an outer `arca run` of another project is ignored.** arca sets `ARCA_PROFILE` for the app, so without this a nested arca in a different project would inherit a profile name that means nothing there.
+6. **The console guard masks only the active profile's values.** It reads values from the child's own env, and putting other profiles' values there would hand them to the app. Values of other profiles are masked in stdout and stderr (as `[arca:NAME@profile]`) and checked by the leak guard, as designed.
+7. **`arca list` shows the matrix when the project has several profiles**, unless `--profile` picks one. `--json` always describes one profile, with a `profile` field saying where each value comes from.
+8. **`import` keeps inheriting a value that equals the parent's**, instead of storing a copy. So `arca import .env.acceptatie --profile acceptatie --delete` removes the same Stripe key from the file without duplicating it.
+9. **`arca init` proposes a profile per `.env.<name>` file**, except framework mode files (`.env.development`, `.env.production`, `.env.test` and their `.local` variants). It suggests `extends` when the file shares at least half its secrets with the default set, or leaves some out. Config lines stay in the file, which the profile lists in `envFiles`.
+10. **`profiles add` and `profiles diff` are agent-safe** (names only). `profiles copy` and `profiles rm` go through the human gate. `profiles rm` refuses the default profile and profiles that others extend.
+11. **In `arca list`, a profile's `envFiles` rank above the framework's own `.env` files**, because arca injects them as process env, which frameworks don't override.

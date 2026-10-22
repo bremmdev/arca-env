@@ -64,6 +64,9 @@ Secrets are stored outside the repo with arca and injected when commands run.
   which wrap commands in \`arca run\`. Ad-hoc \`arca run -- <cmd>\` is refused for agents.
   Output is always masked: secrets appear as \`[arca:NAME]\`.
 - \`npx arca list\` shows which variables exist. \`npx arca check\` verifies required ones are set.
+- A project can have several profiles (sets of values). A run that doesn't use the default
+  profile starts with an \`arca ▸ profile …\` line. Don't switch profiles with \`npx arca use\`
+  unless the user asks: it also changes what the user's own terminals use.
 - Do not try to read secret values (\`npx arca reveal\`, printing \`process.env\`, reading the
   arca store).
 - Only the user can set or change values. If a value is missing or wrong, ask the user

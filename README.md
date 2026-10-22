@@ -53,6 +53,9 @@ arca is installed per project, so in a terminal you run it as `npx arca <command
 | `arca reveal NAME` / `arca export` | Show one value / print all (`--format dotenv\|json\|shell`, `--output file`) | ❌ person only |
 | `arca import [files] [--only A,B] [--delete]` | Move secrets from `.env` files into arca | ❌ person only |
 | `arca init [--yes] [--new-id]` | Set up a project | ✅ without the import |
+| `arca use [profile]` / `arca use --reset` | Show or switch the active profile | ✅ (only when you ask) |
+| `arca profiles` / `profiles add <name> [--extends p]` / `profiles diff <a> <b>` | List, add and compare profiles. Names only. | ✅ |
+| `arca profiles copy <from> <to> [--only A,B]` / `profiles rm <name>` | Copy values between profiles / remove a profile and its values | ❌ person only |
 | `arca policy set agent-run deny` | Stop agents from getting secrets at all in this project | ❌ person only |
 | `arca projects [rm <id>]` | Projects with secrets on this machine | list ✅ |
 
@@ -76,6 +79,40 @@ arca is installed per project, so in a terminal you run it as `npx arca <command
 - The `id` ties clones and git worktrees of the repo to the same secrets.
 - `envFiles` (opt-in) lists `.env` files that arca loads itself, for tools that don't (plain `node`, `tsx`). Leave it empty for frameworks that load their own.
 - `leakGuard.ignore` silences the leak guard for specific names.
+
+## Profiles
+
+A profile is a set of values for the project's variables. Say you have `ontwikkel` and `acceptatie`: the same variables, a few different values. All profiles are equal. You switch between them freely.
+
+```json
+{
+  "defaultProfile": "ontwikkel",
+  "profiles": {
+    "ontwikkel": {},
+    "acceptatie": { "extends": "ontwikkel", "envFiles": [".env.acceptatie"] }
+  }
+}
+```
+
+- `extends` inherits every value the profile doesn't store itself, so `acceptatie` only stores what differs. Without it, seed a full copy with `npx arca profiles copy ontwikkel acceptatie`.
+- `envFiles` lists non-sensitive config that arca loads for that profile. Use names frameworks don't load themselves (`.env.acceptatie`, not `.env.production`).
+- Every value command takes `--profile` / `-p`: `npx arca set DATABASE_URL -p acceptatie`, `npx arca setup -p acceptatie`, `npx arca import .env.acceptatie -p acceptatie`.
+
+```console
+$ npx arca use acceptatie
+✔ acme-web now uses profile acceptatie for every arca run on this machine
+$ npm run dev
+arca ▸ profile acceptatie (via arca use) · 3 secrets · output masked
+$ npx arca use --reset
+```
+
+`arca use` applies to every `arca run` of the project on this machine: your terminals, IDE tasks, git hooks and the scripts agents run. It's stored outside the repo, so teammates aren't affected. Which profile wins: `--profile` (a script can pin one: `"test": "arca run --profile test -- vitest"`), then `ARCA_PROFILE` for one terminal, then `arca use`, then `defaultProfile`. A run on any profile other than the default starts with the `arca ▸ profile …` line, and the app gets `ARCA_PROFILE=<name>`.
+
+A profile only decides which values arca injects. It doesn't set `NODE_ENV` or change `next dev` into `next build`.
+
+Output is masked with the values of **every** profile, so an `acceptatie` connection string that shows up during an `ontwikkel` run still prints as `[arca:DATABASE_URL@acceptatie]`. `npx arca list` shows one column per profile, and `npx arca profiles diff ontwikkel acceptatie` shows which values a profile sets itself and which it inherits.
+
+`arca init` offers each `.env.<name>` file as a profile. A project that had values before it declared profiles keeps them: they move to the default profile on the first run.
 
 ## Secrets in arca, config in `.env`
 
@@ -108,4 +145,4 @@ arca can't stop deliberate workarounds: an agent that hides its markers, edits `
 
 ## Status
 
-Version 0.1: one set of values per project. Profiles (several sets per project, switched with `arca use`), a PTY mode for fully interactive tools, an in-process loader for IDE test runners, and `arca scan` are planned.
+Profiles (several sets of values per project, switched with `arca use`) are in. A PTY mode for fully interactive tools, an in-process loader for IDE test runners, and `arca scan` are planned.

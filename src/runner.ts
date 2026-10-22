@@ -10,6 +10,7 @@ import { scanEnvFiles, summarizeFindings } from './leakguard.js'
 import { decideRun } from './policy.js'
 import { Redactor, createMaskedWriter, needlesFor } from './redact.js'
 import type { Session } from './session.js'
+import { plural } from './util.js'
 
 export interface RunOptions {
   command: string[]
@@ -40,30 +41,33 @@ export async function runCommand(s: Session, opts: RunOptions): Promise<number> 
     if (!decision.allow) throw new ArcaError(decision.message)
   }
 
-  const envFileValues = loadEnvFiles(project.root, project.config.envFiles)
+  // The profile only decides which values and envFiles are used. It never changes NODE_ENV.
+  const envFileValues = loadEnvFiles(project.root, s.envFiles())
+  const profileEnv = { ARCA_PROFILE: s.profile }
 
   if (!s.hasVault()) {
-    const env = { ...envFileValues, ...io.env }
+    const env = { ...envFileValues, ...io.env, ...profileEnv }
     const missing = missingRequired(s, project, env)
     if (ctx.ci || opts.passthrough) {
       // CI, Vercel, Docker: no store here. Use the platform's env, and check it's complete.
-      if (missing.length) throw new ArcaError(missingMessage(project, missing, true))
+      if (missing.length) throw new ArcaError(missingMessage(s, missing, true))
+      banner(s, null, false)
       return spawnChild(s, command, env, null)
     }
     const missingSecrets = missing.filter((n) => isSensitive(project.config.vars[n]))
-    if (missingSecrets.length) throw new ArcaError(missingMessage(project, missing, false))
-    s.note(s.err('dim', `arca: no secrets stored for ${project.config.name} on this machine yet. Running without them.`))
+    if (missingSecrets.length) throw new ArcaError(missingMessage(s, missing, false))
+    s.note(s.err('dim', `arca: no secrets stored for ${s.forWhom()} on this machine yet. Running without them.`))
     return spawnChild(s, command, env, null)
   }
 
-  const vault = await s.readVault()
+  const values = await s.resolve()
   const only = opts.only ? new Set(opts.only) : null
   const vaultValues: Record<string, string> = {}
-  for (const [name, v] of Object.entries(vault.vars)) {
+  for (const [name, v] of values) {
     if (!only || only.has(name)) vaultValues[name] = v.value
   }
   if (only) {
-    const unknown = [...only].filter((n) => !(n in vault.vars))
+    const unknown = [...only].filter((n) => !values.has(n))
     if (unknown.length) s.note(s.err('yellow', `arca: --only names not stored in arca: ${unknown.join(', ')}`))
   }
 
@@ -79,20 +83,38 @@ export async function runCommand(s: Session, opts: RunOptions): Promise<number> 
   }
 
   const missing = missingRequired(s, project, env)
-  if (missing.length) throw new ArcaError(missingMessage(project, missing, false))
+  if (missing.length) throw new ArcaError(missingMessage(s, missing, false))
 
-  const secrets = s.secrets(vault)
+  // Values of every profile are masked, not just this one's (they're named NAME@profile).
+  const secrets = await s.allSecrets()
+  const injected = s.secretsOf(values).filter((x) => x.name in vaultValues)
   if (!s.quiet) {
     const findings = scanEnvFiles(project, s.envFilesForGuard(), secrets)
     if (findings.length) s.note(s.err('yellow', summarizeFindings(findings)))
   }
+  banner(s, injected.length, true)
 
+  Object.assign(env, profileEnv)
   env.ARCA_ACTIVE = project.config.id
   env.ARCA_PROJECT = project.config.name
   delete env.ARCA_PASSPHRASE
-  addConsoleGuard(env, secrets.map((x) => x.name))
+  // The console guard reads values from the child's own env, so it covers this profile's secrets.
+  addConsoleGuard(env, injected.map((x) => x.name))
   const needles = secrets.flatMap(needlesFor)
   return spawnChild(s, command, env, needles)
+}
+
+/**
+ * One line naming the profile whenever it isn't the default, the same for every profile.
+ * Information, not a warning: agents read it too, so they know which set is active.
+ */
+function banner(s: Session, secrets: number | null, masked: boolean): void {
+  if (s.quiet || s.profile === s.defaultProfile) return
+  const via = s.profileSource === 'flag' ? '--profile' : s.profileSource === 'env' ? 'ARCA_PROFILE' : 'arca use'
+  const parts = [`profile ${s.profile} (via ${via})`]
+  if (secrets !== null) parts.push(plural(secrets, 'secret'))
+  if (masked) parts.push('output masked')
+  s.note(s.err('cyan', `arca ▸ ${parts.join(' · ')}`))
 }
 
 /**
@@ -123,7 +145,7 @@ function missingRequired(s: Session, project: Project, env: NodeJS.ProcessEnv): 
     if (env[name] !== undefined && env[name] !== '') return false
     fileKeys ??= new Set(
       s
-        .envFilesForGuard()
+        .envFilesFor()
         .filter((f) => !isTemplateFile(f.name))
         .flatMap((f) => f.entries.filter((e) => e.value !== '').map((e) => e.key)),
     )
@@ -131,11 +153,11 @@ function missingRequired(s: Session, project: Project, env: NodeJS.ProcessEnv): 
   })
 }
 
-function missingMessage(project: Project, missing: string[], ci: boolean): string {
+function missingMessage(s: Session, missing: string[], ci: boolean): string {
   const n = missing.length
-  const head = `arca: ${n} required variable${n === 1 ? ' is' : 's are'} not set for ${project.config.name}:\n  ${missing.join(', ')}`
+  const head = `arca: ${n} required variable${n === 1 ? ' is' : 's are'} not set for ${s.forWhom()}:\n  ${missing.join(', ')}`
   if (ci) return `${head}\nAdd ${n === 1 ? 'it' : 'them'} to your CI or hosting platform's environment variables.`
-  return `${head}\nRun \`npx arca setup\` to set them. Takes about a minute. (AI agents: ask the user to run it.)`
+  return `${head}\nRun \`npx arca setup${s.profileFlag()}\` to set them. Takes about a minute. (AI agents: ask the user to run it.)`
 }
 
 /** Spawns the command. With needles, stdout and stderr are piped through the masker. */
