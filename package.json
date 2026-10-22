@@ -1,12 +1,16 @@
 {
   "name": "@bremmdev/arca-env",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Keep secrets out of .env files and out of reach of AI agents. Encrypted local store, injected at runtime, output always masked.",
   "type": "module",
   "license": "MIT",
   "author": "bremmdev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bremmdev/arca-env"
+  },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "bin": {
     "arca": "./dist/cli.mjs"
