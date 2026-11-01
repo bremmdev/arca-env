@@ -21,6 +21,7 @@ arca moves the **secrets** out of `.env` / `.env.local` files in JavaScript proj
 | 6 | [Roadmap and decisions](06-roadmap.md) | Every confirmed decision, spikes to run first, MVP scope, later phases |
 | 7 | [Profiles](07-profiles.md) | Several local sets of values per project, switching with `arca use`, `extends`, per-profile config files |
 | 8 | [Issue log](08-issue-log.md) | Every error, bug and problem found so far: cause, fix and status. Append new ones here |
+| 9 | [Azure Key Vault references](09-azure-key-vault-references.md) | Research: using `@Microsoft.KeyVault(...)` references locally in Node/Next.js, typical setup, pros and cons, PIM-elevated access |
 
 ## The core insight
 
