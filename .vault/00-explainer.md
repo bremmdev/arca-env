@@ -13,8 +13,9 @@ The goal is **much safer than `.env` files**, not unbreakable. When safety and e
 | Profile | A named set of values for the same variables, like `ontwikkel` or `acceptatie`. You switch between them with `arca use` |
 | Masking | Replacing a secret in command output with a placeholder like `[arca:DATABASE_URL]` |
 | Human gate | The check that a real person at a terminal is asking, not an agent |
+| Leak guard | arca's check that no secret has crept (back) into your `.env` files |
 
-Package: `@bremmdev/arca-env`. Command: `arca`.
+Package: `@bremmdev/arca-env`. Command: `arca`. It's installed per project, so in a terminal you type `npx arca …`. Inside `package.json` scripts, plain `arca` works.
 
 ---
 
@@ -52,7 +53,7 @@ Agent tools have "deny" rules for reading `.env` files. They help, but reports s
 ## 2. How a secret travels
 
 ```
-you store a secret once          arca set STRIPE_SECRET_KEY
+you store a secret once          npx arca set STRIPE_SECRET_KEY
   → arca encrypts it into the store, outside the project
     → you start the app as usual       npm run dev   (the script is "arca run -- next dev")
       → arca decrypts the secrets and starts the app with them in its environment
@@ -60,7 +61,7 @@ you store a secret once          arca set STRIPE_SECRET_KEY
           → everything the app prints passes through arca, which masks the secrets
 ```
 
-1. **You store a secret** with `arca set NAME`. You type the value into a hidden prompt, so it's not in your shell history either.
+1. **You store a secret** with `npx arca set NAME`. You type the value into a hidden prompt, so it's not in your shell history either.
 2. **arca encrypts it** into a file in your user data folder. The key to that file sits in your operating system's keychain, so you never type a master password.
 3. **You start the app** the way you always do: `npm run dev`. The only change is that the script now starts with `arca run --`.
 4. **arca starts your app** with the secrets added to its environment. Next.js, Vite, Astro, TanStack Start, Nuxt, SvelteKit, Prisma and plain Node all read `process.env`, so they just work.
@@ -111,17 +112,20 @@ arca checks **who is asking** before it does anything with a secret:
 | Action | You, in your terminal | An AI agent |
 | --- | --- | --- |
 | Run the app or tests through a package script (`npm run dev`) | ✅ | ✅ output masked |
-| Run any other command with secrets (`arca run -- printenv`) | ✅ | ❌ |
-| See a value (`arca reveal NAME`) | ✅ | ❌ |
-| Add, change or remove a value | ✅ | ❌ it's told to ask you |
-| See which variables exist (`arca list`, `arca check`) | ✅ | ✅ names only |
-| Switch to another profile (`arca use acceptatie`) | ✅ | ✅ when you ask it to |
+| Run any other command with secrets (`npx arca run -- printenv`) | ✅ | ❌ |
+| See a value (`npx arca reveal NAME`) | ✅ | ❌ |
+| Add, change or remove a value (`npx arca set NAME`) | ✅ | ❌ it's told to ask you |
+| See which variables exist (`npx arca list`, `npx arca check`) | ✅ | ✅ names only |
+| Switch to another profile (`npx arca use acceptatie`) | ✅ | ✅ it's asked to do this only when you ask |
 
 How arca tells you and an agent apart:
 
 - **Agents announce themselves.** Agent tools set environment variables in the commands they run, such as `CLAUDECODE` for Claude Code. Cursor, Codex, Gemini and others have their own, and there's a shared `AI_AGENT` convention any tool can use.
 - **People have a real terminal.** Agents usually run commands without an interactive terminal. Revealing or changing a value needs one.
 - **Scripts are checked.** arca verifies that a command really came from a script in `package.json`, and that the script matches the file.
+- **A leaked marker doesn't lock you out.** If an agent's environment variables end up in your own terminal (some IDEs do this), arca shows a short code and asks you to type it, instead of refusing.
+
+Tools that don't run commands from a terminal, like IDE tasks and git hooks, can run any command too, with masked output. arca can't tell them apart from an agent that sets no marker (see [section 10](#10-what-it-protects-against-and-what-it-cant)).
 
 When arca refuses, it says what to do instead. Agents follow instructions in error messages well, so the refusal doubles as onboarding:
 
@@ -150,6 +154,8 @@ Error: password authentication failed. Connection: postgres://app:[arca:DATABASE
 - The placeholder names the variable, so debugging still works ("the app logs `DATABASE_URL` on startup") without showing the value.
 - arca also catches the common encoded forms of a value (URL-encoded, base64, JSON-escaped) and the password inside a connection string.
 - Values from *other* profiles are masked too. An acceptatie value that shows up during an ontwikkel run appears as `[arca:DATABASE_URL@acceptatie]`.
+- Server logs that dev tools send to the **browser console** (TanStack Devtools, React's server log replay in Next.js) are masked too. arca loads a small guard into the app that masks `console.*` calls before those tools see them.
+- Values shorter than 6 characters aren't masked, because replacing every `dev` or `3000` would wreck the output. arca warns when you store a secret that short.
 
 One trade-off: because arca sits between the app and your terminal, some tools think they're not in a real terminal. Colours are kept, but a few interactive prompts or spinners may behave a bit differently. A later version runs the app in a pseudo-terminal, which removes that difference.
 
@@ -160,7 +166,7 @@ One trade-off: because arca sits between the app and your terminal, some tools t
 You don't have to move everything. **Secrets go in arca, and non-sensitive config can stay in `.env`**, where your framework loads it as it always has.
 
 - **Who wins when a name is in both:** arca, then your shell, then `.env` files. If arca overrides a different value, it tells you (by name, never by value).
-- **The leak guard** keeps secrets from creeping back into `.env`. Every time you run something, arca checks your `.env` files and warns if one contains a value stored in arca, or something that looks like a secret (`sk_live_…`, a URL with a password, a long random string).
+- **The leak guard** keeps secrets from creeping back into `.env`. Every time you run something, arca checks your `.env` files and warns if one contains a value stored in arca, a variable `arca.json` declares as a secret, or something that looks like a secret (`sk_live_…`, a URL with a password, a long random string). The warning is one line and never stops the command. `npx arca doctor` shows each finding and how to fix it, and `npx arca check --strict` fails on findings, for CI or a pre-commit hook.
 - **Importing never deletes on its own.** `arca import` copies secrets out of your `.env` files and leaves the files alone. Add `--delete` to remove just the lines that moved; your config lines stay.
 
 ---
@@ -177,6 +183,7 @@ $ npx arca use --reset           # back to the default set
 ```
 
 - **Every command follows the switch**: your terminals, IDE tasks, and the scripts agents run. Your scripts stay as they are.
+- **Two exceptions:** a script can pin a profile (`"test": "arca run --profile test -- vitest"` always uses `test`), and `ARCA_PROFILE=<name>` picks a profile for one terminal.
 - **The variables are declared once** in `arca.json`. A profile can **extend** another, so it only stores the values that differ.
 - **All profiles are equal.** None is locked or treated as more sensitive. The usual rules apply to each one: agents use scripts, output is masked, and only you change values.
 - **The banner** shows which set is active whenever it isn't the default, so you don't forget you switched.
@@ -195,11 +202,13 @@ npx arca set DATABASE_URL
 npm run dev
 ```
 
-**An existing project with `.env` files.** `arca init` reads your files, suggests which variables are secrets and which are config, moves the secrets into arca, and wraps your scripts. Your files aren't touched until you run `npx arca import --delete`.
+**An existing project with `.env` files.** `npx arca init` reads your files, suggests which variables are secrets and which are config, moves the secrets into arca, and wraps your scripts. It offers each extra file like `.env.acceptatie` as a profile, and adds a short "Secrets (arca)" section to `AGENTS.md` / `CLAUDE.md`. Your files aren't touched until you run `npx arca import --delete`.
 
-**A teammate who clones the repo.** `npm run dev` tells them which variables are missing. `npx arca setup` then asks for each one, with its description and a link to where to get it.
+**A teammate who clones the repo.** `npm run dev` tells them which variables are missing. `npx arca setup` then asks for each one, with its description and a link to where to get it, and can generate random values where `arca.json` allows it.
 
-**CI, Vercel, Docker.** Nothing to do. There's no arca store there, so `arca run` simply starts the command with the platform's own variables, and checks that the required ones exist.
+**CI, Vercel, Docker.** Nothing to do. There's no arca store there, so `arca run` simply starts the command with the platform's own variables, and checks that the required ones exist. The `start` script stays unwrapped, so production images don't need arca.
+
+**Something seems off?** `npx arca doctor` checks the keychain, the project, your scripts and your `.env` files, and says what to fix. `npx arca` on its own shows a short status.
 
 ---
 
@@ -217,15 +226,16 @@ It prevents:
 
 - secrets sitting in files that agents read, index or commit,
 - secrets showing up in logs, errors and test output,
-- agents reading values, running one-off commands with secrets, or changing values,
+- agents that arca recognises reading values, running one-off commands with secrets, or changing values,
 - secrets drifting back into `.env` files unnoticed.
 
 It **can't** stop:
 
+- **agents arca doesn't recognise.** Detection relies on the environment variables agent tools set. So far only Claude Code's have been checked. An agent tool that sets none is treated like an IDE task: it can run any command with secrets, though the output is still masked, and it still can't see or change values without a real terminal. Setting `ARCA_AGENT=1` in that agent's configuration fixes this.
 - **deliberate workarounds.** An agent that hides its identity, edits `package.json` to add a script that prints secrets, or reads the keychain directly is no longer working "under normal circumstances". The edit to `package.json` does show up in your git diff.
 - **malware running as you.** Anything that runs as your user can reach what you can reach. No local tool fixes that.
 - **your own app.** Code in your app (and its dependencies) reads `process.env` by design.
-- **the browser.** An error page that shows a connection string isn't terminal output, so it isn't masked.
+- **pages in the browser and files the app writes.** Console logs sent to the browser are masked, but an error overlay or a page that shows a connection string isn't, and neither is anything the app writes to a file.
 
 In short, it's best-effort defence in depth, not a security boundary. That's the same honest framing AWS uses in its own guidance on secrets and AI agents.
 
@@ -245,7 +255,7 @@ In short, it's best-effort defence in depth, not a security boundary. That's the
 
 ## 12. Status and next steps
 
-arca **0.2.0 is published on npm** (Node 24 or newer).
+arca **0.2.0 is published on npm** (Node 24 or newer). 0.2.1 is ready: it fixes how a script pinned to another profile behaves inside another arca run, and the version `npx arca --version` reports. It's published when it reaches `main`.
 
 1. **Built**: the encrypted store, `arca run` with masking (including a console guard for dev tools that send server logs to the browser), agent detection, profiles, the leak guard, and the commands above.
 2. **Still being checked**: markers of agents other than Claude Code, script detection under pnpm, yarn and bun, and how Ctrl+C, colours and prompts behave in a real terminal through the masking pipe.
@@ -264,6 +274,8 @@ arca **0.2.0 is published on npm** (Node 24 or newer).
 - [Framework integration](05-framework-integration.md): Next.js, Vite, Astro, Prisma, Turborepo and more
 - [Roadmap and decisions](06-roadmap.md): every decision so far, and the plan
 - [Profiles](07-profiles.md): the full profile design
+- [Issue log](08-issue-log.md): every bug and problem found so far, and what's still open
+- [Azure Key Vault references](09-azure-key-vault-references.md): research on using Key Vault references for local development
 
 **Outside sources**
 - [1Password CLI, `op run`](https://developer.1password.com/docs/cli/reference/commands/run) (output masking)
