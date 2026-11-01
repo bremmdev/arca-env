@@ -116,8 +116,8 @@ All value commands take `--profile` / `-p`: `run`, `set`, `unset`, `reveal`, `ex
 | `arca profiles` | List profiles: active, extends, number of values set, missing required | ✅ |
 | `arca profiles add <name> [--extends p]` | Add a profile to `arca.json` | ✅ |
 | `arca profiles diff <a> <b>` | **Names only:** which values each profile sets itself and which it inherits. Useful for "what does acceptatie override?" | ✅ |
-| `arca profiles copy <from> <to> [--only A,B]` | Copy values, e.g. seed `acceptatie` from `ontwikkel` and then change a few | 🔒 |
-| `arca profiles rm <name>` | Remove a profile and its values | 🔒 |
+| `arca profiles copy <from> <to> [--only A,B] [--yes]` | Copy values, e.g. seed `acceptatie` from `ontwikkel` and then change a few. Values `<to>` already has differently are only overwritten after a confirm (or `--yes`). | 🔒 |
+| `arca profiles rm <name> [--yes]` | Remove a profile from `arca.json` and its values on this machine, after a confirm (or `--yes`) | 🔒 |
 | `arca setup --profile acceptatie` | Walk through missing required vars for that profile | 🔒 |
 | `arca check --all-profiles` | Completeness of every profile (names only) | ✅ |
 
@@ -147,7 +147,7 @@ FEATURE_X        .env           .env.acceptatie    .env
 
 ## AGENTS.md
 
-The AGENTS.md snippet gains one line: *"The active profile (set of values) is shown in the `arca ▸ profile …` banner. Don't switch it with `arca use` unless the user asks."*
+The AGENTS.md snippet gains one bullet: *"A project can have several profiles (sets of values). A run that doesn't use the default profile starts with an `arca ▸ profile …` line. Don't switch profiles with `npx arca use` unless the user asks: it also changes what the user's own terminals use."*
 
 ## Design calls in this doc (flag any you disagree with)
 

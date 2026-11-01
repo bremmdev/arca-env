@@ -4,7 +4,7 @@
 
 | # | Decision | Consequence in the design |
 |---|---|---|
-| D1 | **Package name `@bremmdev/arca-env`**, binary `arca`, **one package** | `npm i -D @bremmdev/arca-env`, `npx arca …`, subpath exports `@bremmdev/arca-env/register` and `/schema.json`. `$schema` points into `node_modules/@bremmdev/arca-env/`. |
+| D1 | **Package name `@bremmdev/arca-env`**, binary `arca`, **one package** | `npm i -D @bremmdev/arca-env`, `npx arca …`, subpath export `/schema.json` (`@bremmdev/arca-env/register` follows in Phase 2). `$schema` points into `node_modules/@bremmdev/arca-env/`. |
 | D2 | **Agents may only run package scripts** | Agents get secrets only via a verified `package.json` script. The policy can be tightened (`approved`, `deny`) but never loosened. There's no `allow` mode. ([03 §6](03-architecture.md#6-policy-engine)) |
 | D3 | **Always mask output** | Every `arca run` and `register` load is redacted, for humans too, with no off-switch. That makes PTY mode important for interactive tools, so it moves from Phase 3 to Phase 2. ([03 §7](03-architecture.md#7-runner-arca-run), [§9](03-architecture.md#9-redaction-engine)) |
 | D4 | **Only a human can change values** | `set` (new, overwrite, `--generate`), `unset`, `import`, `restore`, `setup` and policy changes are all human-gated. Agent-run `arca init` scaffolds config but skips the import. ([04](04-cli-and-dx.md#commands)) |
@@ -48,19 +48,23 @@ Each spike is a throwaway script. The output is a short note added to this folde
 | S7 | Windows Hello `UserConsentVerifier` from Node (PowerShell WinRT shim vs a tiny prebuilt helper) and macOS `LAContext` helper: latency and packaging | Phase 2 human gate. Matters more now that every write needs it (D4). |
 | S8 | `node-pty` as an optional dependency: are prebuilt binaries available for win-x64/arm64, darwin-x64/arm64, linux-x64/arm64 and current Node versions without a compiler? ConPTY behaviour on Windows, resize forwarding, Ctrl+C, and masking of PTY output. | PTY mode (D3) without making installs fragile |
 
-## Implementation status (2026-10-22)
+## Implementation status
 
-Version 0.1 implements Phase 1 **without profiles**, as asked: first validate replacing or supplementing a `.env` with one set of values. Internally everything uses a single set (`projects/<id>/default.vault`), and `--profile` explains that profiles aren't available yet. So profiles can be added later without migrating the store.
+Checked against the code on 2026-11-01. **0.2.0 is published on npm** (Phase 1 plus profiles), built for and requiring Node 24 or newer. 0.2.1 fixes nested runs with another profile and the reported version ([08 R1–R3](08-issue-log.md#found-while-checking-the-docs-against-the-code)); it publishes when it reaches `main`.
+
+Version 0.1 (2026-10-22) implemented Phase 1 **without profiles**, as asked: first validate replacing or supplementing a `.env` with one set of values. Internally everything used a single set (`projects/<id>/default.vault`), so profiles could be added later without migrating the store.
 
 - **Done:** `arca.json` + JSON Schema, store (atomic writes, lock, `.bak`, registry, ID collision warning), crypto, OS keychain + passphrase mode, context detection, script verification, policy (`scripts`/`deny`), human gate with challenge, runner (env merge with override notice, passthrough + validation, nesting, signals, exit codes, always-on masking in pipe mode with `FORCE_COLOR`/`COLUMNS`), redactor with variants, `.env` coexistence + leak guard, and every Phase 1 command (`init`, `setup`, `set`, `unset`, `restore`, `list`, `check`, `run`, `reveal`, `export`, `import`, `doctor`, `policy`, `projects`).
-- **Profiles (D10), added 2026-10-22:** everything in [07](07-profiles.md): `profiles`/`defaultProfile` in `arca.json` with `extends` and per-profile `envFiles`, `--profile`/`-p` on every value command, `ARCA_PROFILE`, `arca use [profile] [--reset]` with `state.json`, the `arca ▸ profile …` banner, `arca profiles` list/add/diff/copy/rm, `check --all-profiles`, the `list` matrix, masking with every profile's values, `init` turning `.env.<name>` files into profiles, and automatic migration of `default.vault`. Implementation calls are listed at the end of 07. Checked in the Next.js example and a new TanStack Start example (`examples/tanstack-start`), both on `ontwikkel`/`default` and `acceptatie`, in the dev server, the browser console and Next's agent log file. 80 tests.
-- **Not yet:** the keyutils cache for passphrase mode (it prompts every run unless `ARCA_PASSPHRASE` is set); everything in Phase 2 (`scan`/`hook`, `register`, PTY mode, `reveal --copy`, `approved` policy).
-- **Tests:** 49 (unit plus in-process end-to-end with real child processes). An end-to-end run on a real Next.js 16.4 app went from mixed `.env.local` → `init` → `import --delete` → `npm run dev` / `npm run build` as Claude Code. Server-side secrets reached the app, `.env.local` config still loaded through Next.js, and the dev server log showed `[arca:…]`. Every agent attack path was refused, and CI passthrough worked with and without platform vars.
+- **Profiles (D10), added 2026-10-22:** everything in [07](07-profiles.md): `profiles`/`defaultProfile` in `arca.json` with `extends` and per-profile `envFiles`, `--profile`/`-p` on every value command, `ARCA_PROFILE`, `arca use [profile] [--reset]` with `state.json`, the `arca ▸ profile …` banner, `arca profiles` list/add/diff/copy/rm, `check --all-profiles`, the `list` matrix, masking with every profile's values, `init` turning `.env.<name>` files into profiles, and automatic migration of `default.vault`. Implementation calls are listed at the end of 07. Checked in the Next.js example and a new TanStack Start example (`examples/tanstack-start`), both on `ontwikkel`/`default` and `acceptatie`, in the dev server, the browser console and Next's agent log file.
+- **Console guard** (pulled forward from Phase 2's `register`, see the TanStack finding below): `dist/guard.mjs`, preloaded through `NODE_OPTIONS`.
+- **Not yet:** the keyutils cache for passphrase mode (it prompts every run unless `ARCA_PASSPHRASE` is set); a CI test matrix on Windows/macOS/Linux (the publish workflow runs the tests on Ubuntu only); the migration guide and per-framework doc pages; everything in Phase 2 (`scan`/`hook`, `register`, PTY mode, `reveal --copy`, `approved` policy, `backup`, `init --undo`, Turbo `globalPassThroughEnv`, agent-tool deny rules from `init`).
+- **Tests:** 84 (unit plus in-process end-to-end with real child processes); 49 at version 0.1. An end-to-end run on a real Next.js 16.4 app went from mixed `.env.local` → `init` → `import --delete` → `npm run dev` / `npm run build` as Claude Code. Server-side secrets reached the app, `.env.local` config still loaded through Next.js, and the dev server log showed `[arca:…]`. Every agent attack path was refused, and CI passthrough worked with and without platform vars.
 
 **Spike findings so far:**
 
 - **S1 (Windows):** `@napi-rs/keyring` with Windows Credential Manager persists, and reads take about 2 ms. `arca run` adds about 100 ms on this machine, mostly one extra Node startup (plain `node -e 0` takes 145 ms).
 - **S3 (Claude Code):** sets `AI_AGENT=claude-code_<version>_agent`, `CLAUDECODE=1` and `CLAUDE_CODE_ENTRYPOINT`. Other agents still need checking.
+- **S3 (Claude Code inside T3 Code, 2026-11-01):** the same three markers (`CLAUDE_CODE_ENTRYPOINT=sdk-ts`), so arca detects it as claude-code. T3 also sets `T3CODE_CLI_PATH`. Don't use that as a marker until it's confirmed that T3's terminals for humans don't set it.
 - **S4 (npm 11):** `npm_lifecycle_script` is the script text without the extra `-- args`, so `npm run dev -- --port 4000` verifies. `npx`/`npm exec` set `npm_lifecycle_event=npx` with the ad-hoc command as the script, which arca treats as ad-hoc. pnpm, yarn and bun still need checking.
 - **Next.js 16.4** appends its own block to `AGENTS.md` during `next dev`. arca's section stays intact.
 - **TanStack Devtools leaked to the browser** (reported by the user 2026-10-22). Its `consolePiping` (on by default in dev) replaces `console.*` in the server entry and POSTs the raw arguments to the Vite server, which shows them in the browser console. That bypasses stdout masking, and agents with browser tools read that console. **Fix:** an in-process console guard preloaded by `arca run` through `NODE_OPTIONS=--import` (`dist/guard.mjs`, about 6 kB), verified against TanStack's real injected code. This pulls part of the planned `register` stream patching forward from Phase 2.
@@ -70,20 +74,20 @@ Version 0.1 implements Phase 1 **without profiles**, as asked: first validate re
 
 Scope:
 
-- [ ] `arca.json` loader + JSON Schema (shipped in the package), walk-up resolution
+- [x] `arca.json` loader + JSON Schema (shipped in the package), walk-up resolution
 - [x] **Profiles (D10):** resolution of `extends` and per-profile `envFiles`; selection (`--profile` > `ARCA_PROFILE` > `arca use` > `defaultProfile`); `arca use [profile] [--reset]` with `state.json`; banner with the selection source; `arca profiles` list/add/diff/copy/rm
-- [ ] Store (paths, one vault file per profile, `policy.vault`, atomic writes, lock, one-deep backup), registry, ID collision warning
-- [ ] Crypto envelope (HKDF + AES-256-GCM), keychain adapter, passphrase mode with the keyutils cache
-- [ ] Context detection: agent markers (vendored list + `AI_AGENT` + `ARCA_AGENT` + user markers), TTY, verified script, CI, nesting
-- [ ] Policy engine implementing D2 and D4 ([03 §6](03-architecture.md#6-policy-engine)), human gate (TTY + no agent + challenge)
-- [ ] Runner: cross-spawn, env merge `envFiles < shell < vault` with override notice (D5), passthrough + validation, signals, exit codes, **pipe mode with always-on masking** (D3), `FORCE_COLOR`/`COLUMNS` forwarding
-- [ ] Redactor with variants and URL-password needles, `[arca:NAME]`
-- [ ] `.env` coexistence (D9): dotenv parsing, opt-in `envFiles`, **leak guard** (exact match, declared-sensitive, heuristics, git-tracked escalation, `leakGuard.ignore`)
-- [ ] Commands: `init` (framework detect, secrets-vs-config sorting, import for humans, wrap scripts, AGENTS.md), `setup`, `set` (masked/stdin/`--generate`, positional with warning), `unset`, `list`, `check [--strict]`, `run`, `reveal`, `export`, `import [--only] [--delete]` (entry-level removal, D7), `restore`, `doctor`
-- [ ] Agent-oriented refusal messages for reveal, ad-hoc run, and writes
-- [ ] Tests: unit (crypto, redactor, policy matrix as a table test), integration (spawn real `node` children through the redactor), CI matrix (windows-latest, macos-latest, ubuntu-latest)
-- [ ] Docs: README with the honest threat model, a migration guide, one framework page per row in [05](05-framework-integration.md)
-- [ ] Publish `@bremmdev/arca-env` with `bin: { "arca": … }` and `exports` for `.`, `./register`, `./schema.json`
+- [x] Store (paths, one vault file per profile, `policy.vault`, atomic writes, lock, one-deep backup), registry, ID collision warning
+- [ ] Crypto envelope (HKDF + AES-256-GCM) ✅, keychain adapter ✅, passphrase mode ✅ **without the keyutils cache** (O1)
+- [x] Context detection: agent markers (vendored list + `AI_AGENT` + `ARCA_AGENT` + user markers), TTY, verified script, CI, nesting
+- [x] Policy engine implementing D2 and D4 ([03 §6](03-architecture.md#6-policy-engine)), human gate (TTY + no agent + challenge)
+- [x] Runner: cross-spawn, env merge `envFiles < shell < vault` with override notice (D5), passthrough + validation, signals, exit codes, **pipe mode with always-on masking** (D3), `FORCE_COLOR`/`COLUMNS` forwarding, console guard
+- [x] Redactor with variants and URL-password needles, `[arca:NAME]`
+- [x] `.env` coexistence (D9): dotenv parsing, opt-in `envFiles`, **leak guard** (exact match, declared-sensitive, heuristics, git-tracked escalation, `leakGuard.ignore`)
+- [x] Commands: `init` (framework detect, secrets-vs-config sorting, import for humans, wrap scripts, AGENTS.md), `setup`, `set` (masked/stdin/`--generate`, positional with warning), `unset`, `list`, `check [--strict]`, `run`, `reveal`, `export`, `import [--only] [--delete]` (entry-level removal, D7), `restore`, `doctor`
+- [x] Agent-oriented refusal messages for reveal, ad-hoc run, and writes
+- [ ] Tests: unit ✅, integration with real `node` children through the redactor ✅, **CI matrix (windows-latest, macos-latest, ubuntu-latest) not set up**: tests only run on Ubuntu in the publish workflow
+- [ ] Docs: README with the honest threat model ✅, **a migration guide and one framework page per row in [05](05-framework-integration.md) not written**
+- [x] Publish `@bremmdev/arca-env` with `bin: { "arca": … }` and `exports` for `.` and `./schema.json` (0.2.0 on npm). `./register` follows with the loader in Phase 2.
 
 **MVP acceptance scenarios** (scripted, run in CI where possible):
 
@@ -102,7 +106,7 @@ Scope:
    - `npm run dev` output is **still masked**, keeps its colours (`FORCE_COLOR`), and Ctrl+C stops it with no orphaned processes.
 4. `CI=true` with no vault: `npm run build` passes through, and fails listing names when a required var is missing.
 5. A git worktree of the same repo sees the same secrets with no extra setup.
-6. `arca scan` finds a pasted secret in a staged file, and the pre-commit hook blocks the commit.
+6. *(Moved to Phase 2, needs `arca scan`.)* `arca scan` finds a pasted secret in a staged file, and the pre-commit hook blocks the commit. Until then, `arca check --strict` covers `.env*` files.
 7. A key exists in arca, in the shell env *and* in `.env` with three different values: the app sees the arca value, and arca prints the override notice (names only).
 8. Profiles:
    - After `arca use acceptatie`, `npm run dev` from a human terminal, an IDE task and an agent (`CLAUDECODE=1`) all get acceptatie values (falling back to `ontwikkel` through `extends`) plus `.env.acceptatie` config, with the banner and no prompt. The same happens in a second git worktree.
@@ -120,7 +124,10 @@ Scope:
 - `approved` agent policy with `arca policy allow …`
 - `arca reveal --copy` with clipboard auto-clear
 - Turbo `globalPassThroughEnv` integration in `init`
-- `arca backup` / restore bundles
+- `arca backup` / restore bundles, and the `doctor` hint about backups
+- Passphrase-mode keyutils cache (O1), if it isn't done before Phase 2
+- `arca init --undo`, and optional agent-tool deny rules from `init` (Claude Code `permissions.deny` for `arca reveal/export/set/import` and the store path)
+- CI test matrix on Windows, macOS and Linux
 - Clear docs for VS Code / JetBrains / Cursor setups
 
 ## Phase 3: bigger bets (only if there's demand)
@@ -136,7 +143,13 @@ Scope:
 
 ## Still open
 
-Nothing blocking. All product decisions are recorded as D1–D10 above. Spikes S1–S8 are the next step.
+Nothing blocking. All product decisions are recorded as D1–D10 above. Open as of 2026-11-01:
+
+- **Spikes not finished:** S2 (pipe-mode fidelity in a real terminal), S3 for agents other than Claude Code, S4 for pnpm, yarn and bun, S5–S8. Details per item in [08](08-issue-log.md#open-problems-and-things-not-verified-yet).
+- **Overhead budget:** [03 §7](03-architecture.md#7-runner-arca-run) sets under 80 ms. S1 measured about 100 ms on Windows, mostly the extra Node startup. Adjust the budget, or make startup faster?
+- **Policy file deletion:** a deleted `policy.vault` falls back to `scripts`, so a `deny` can be loosened by tampering with the store. Documented in [02](02-threat-model.md#prompt-injection-walkthrough). Leave it as accepted circumvention, or detect it?
+- **Azure Key Vault ([09](09-azure-key-vault-references.md)):** resolve `@Microsoft.KeyVault(...)` references at run time, or `arca pull --from azure` into the store, or neither. Not on the Phase 3 provider list yet.
+- **License:** `package.json` says MIT, but there's no `LICENSE` file (O7).
 
 ## Risks
 

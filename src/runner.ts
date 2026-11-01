@@ -32,8 +32,11 @@ export async function runCommand(s: Session, opts: RunOptions): Promise<number> 
   s.warnConfig()
 
   // Nested run (`npm run dev` → `arca run -- turbo dev` → `arca run -- next dev`): the outer
-  // arca already injected the secrets and is masking the output.
-  if (ctx.activeProject === project.config.id) return spawnChild(s, command, io.env, null)
+  // arca already injected this profile's secrets and is masking the output. A nested run for
+  // another profile (a workspace script pinned with --profile) is a full run of its own.
+  const nested = ctx.activeProject === project.config.id
+  const outerProfile = nested ? io.env.ARCA_PROFILE : undefined
+  if (nested && outerProfile === s.profile) return spawnChild(s, command, io.env, null)
 
   const display = command.join(' ')
   if (ctx.agent.detected) {
@@ -41,12 +44,13 @@ export async function runCommand(s: Session, opts: RunOptions): Promise<number> 
     if (!decision.allow) throw new ArcaError(decision.message)
   }
 
+  const inherited = nested ? await withoutProfileValues(s, io.env, outerProfile) : io.env
   // The profile only decides which values and envFiles are used. It never changes NODE_ENV.
   const envFileValues = loadEnvFiles(project.root, s.envFiles())
   const profileEnv = { ARCA_PROFILE: s.profile }
 
   if (!s.hasVault()) {
-    const env = { ...envFileValues, ...io.env, ...profileEnv }
+    const env = { ...envFileValues, ...inherited, ...profileEnv }
     const missing = missingRequired(s, project, env)
     if (ctx.ci || opts.passthrough) {
       // CI, Vercel, Docker: no store here. Use the platform's env, and check it's complete.
@@ -72,10 +76,10 @@ export async function runCommand(s: Session, opts: RunOptions): Promise<number> 
   }
 
   // Precedence: vault > inherited shell env > envFiles loaded by arca > the framework's own .env files.
-  const overridden = Object.keys(vaultValues).filter((k) => io.env[k] !== undefined && io.env[k] !== vaultValues[k])
+  const overridden = Object.keys(vaultValues).filter((k) => inherited[k] !== undefined && inherited[k] !== vaultValues[k])
   const env: NodeJS.ProcessEnv = opts.noOverride
-    ? { ...envFileValues, ...vaultValues, ...io.env }
-    : { ...envFileValues, ...io.env, ...vaultValues }
+    ? { ...envFileValues, ...vaultValues, ...inherited }
+    : { ...envFileValues, ...inherited, ...vaultValues }
   if (overridden.length && !opts.noOverride && !s.quiet) {
     const names = overridden.join(', ')
     const verb = overridden.length === 1 ? 'overrides a different value' : 'override different values'
@@ -134,6 +138,21 @@ function defaultGuardFile(): string | null {
   // dist/guard.mjs sits next to the bundled CLI. Running from source (tests) there is none.
   const file = fileURLToPath(new URL('./guard.mjs', import.meta.url))
   return existsSync(file) ? file : null
+}
+
+/**
+ * The env without what an outer `arca run` of this project injected for `profile`: its stored
+ * values and its envFiles values, where they're still unchanged. Without this, a nested run for
+ * another profile would inherit values that profile doesn't have.
+ */
+async function withoutProfileValues(s: Session, env: NodeJS.ProcessEnv, profile: string | undefined): Promise<NodeJS.ProcessEnv> {
+  const project = s.requireProject()
+  if (!profile || !(profile in project.config.profiles)) return env
+  const injected: Record<string, string> = loadEnvFiles(project.root, s.envFiles(profile))
+  if (s.hasVault(profile)) for (const [name, v] of await s.resolve(profile)) injected[name] = v.value
+  const out = { ...env }
+  for (const [name, value] of Object.entries(injected)) if (out[name] === value) delete out[name]
+  return out
 }
 
 /** Required declared vars that are neither in the env nor in a .env file the framework will load. */

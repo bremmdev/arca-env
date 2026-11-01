@@ -273,3 +273,49 @@ describe('init with .env.<name> files', () => {
     expect(readFileSync(join(h.dir, '.env.acceptatie'), 'utf8')).toBe('APP_TITLE=Hello acc\n')
   })
 })
+
+describe('nested runs', () => {
+  const DB_S = 'postgres://app:solo-pass-333@db-solo.local:5432/acme'
+  const h = project({
+    profiles: {
+      ontwikkel: {},
+      acceptatie: { extends: 'ontwikkel', envFiles: ['.env.acceptatie'] },
+      test: { extends: 'ontwikkel' },
+      solo: {},
+    },
+  })
+  // What an outer `arca run` on acceptatie hands its child (e.g. `arca run -- turbo test`).
+  const outer: NodeJS.ProcessEnv = {
+    ARCA_ACTIVE: ID,
+    ARCA_PROFILE: 'acceptatie',
+    DATABASE_URL: DB_A,
+    STRIPE_SECRET_KEY: STRIPE,
+    API_BASE_URL: 'https://api.acc.example.com',
+  }
+
+  it('reuse the outer run when the profile is the same', async () => {
+    await seed(h)
+    const { code, io } = await h.human(['run', '--', 'node', 'print.js'], { env: outer })
+    expect(code).toBe(0)
+    expect(io.out()).toContain(`db=${DB_A}`) // not masked here: the outer arca masks
+    expect(io.err()).not.toContain('arca ▸')
+  })
+
+  it('switch to a profile a nested script pins, without the outer values', async () => {
+    const { code, io } = await h.human(['run', '--profile', 'test', '--', 'node', 'print.js'], { env: outer })
+    expect(code).toBe(0)
+    expect(io.err()).toContain('arca ▸ profile test (via --profile)')
+    expect(io.out()).toContain('host=db-ontw.local')
+    expect(io.out()).toContain('db=[arca:DATABASE_URL]')
+    expect(io.out()).toContain('profile=test base=undefined') // acceptatie's envFiles value is gone
+    expect(io.err()).not.toContain('overrides a different value')
+  })
+
+  it("don't let a pinned profile inherit values it doesn't have", async () => {
+    expect((await h.human(['set', 'DATABASE_URL', '--profile', 'solo'], { stdin: DB_S + '\n' })).code).toBe(0)
+    const { code, io } = await h.human(['run', '--profile', 'solo', '--', 'node', 'print.js'], { env: outer })
+    expect(code).toBe(1)
+    expect(io.err()).toContain('STRIPE_SECRET_KEY')
+    expect(io.out()).toBe('')
+  })
+})

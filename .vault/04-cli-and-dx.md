@@ -59,26 +59,26 @@ Agents get **names-only read access** plus package scripts. Anything that shows 
 
 | Command | Purpose | Agent? |
 |---|---|---|
-| `arca init` | Wizard: create `arca.json`, detect framework, sort `.env*` entries into secrets (→ arca) and config (stays in `.env`), import the secrets, wrap package scripts, optional AGENTS.md section. **Never deletes or edits `.env` files** unless `--delete`. | ✅ without the import step (it tells the user to run `arca import`) |
-| `arca setup [--profile p]` | Interactive fill of **missing** vars for a profile (teammate onboarding): shows description and docs link, uses masked input, offers `generate` | 🔒 human gate |
-| `arca set NAME` | Set or overwrite one value: masked prompt, or from stdin (`… \| arca set NAME`). `--profile`, `--generate[=32]` | 🔒 human gate |
+| `arca init [--yes] [--new-id] [--no-import]` | Wizard: create `arca.json`, detect framework, sort `.env*` entries into secrets (→ arca) and config (stays in `.env`), offer each `.env.<name>` file as a profile, import the secrets, wrap package scripts, offer `start:local`, add or update the AGENTS.md section. **Never deletes or edits `.env` files.** `--yes` takes every default, `--no-import` skips the import, `--new-id` only gives an existing `arca.json` a fresh ID. | ✅ without the import step (it tells the user to run `npx arca import`) |
+| `arca setup [--profile p] [--all]` | Interactive fill of **missing** required secrets for a profile (teammate onboarding), or every declared secret with `--all`: shows description, docs link and example, uses masked input, offers `generate`. An empty answer skips a var. | 🔒 human gate |
+| `arca set NAME [value]` | Set or overwrite one value: masked prompt, or from stdin (`… \| arca set NAME`). `--profile`, `--generate[=bytes]` (8–1024, default from `arca.json` or 32). Offers to declare an undeclared name in `arca.json`. | 🔒 human gate |
 | `arca unset NAME` | Remove a value | 🔒 human gate |
-| `arca list` / `ls` | Names × profiles matrix: set / missing / inherited / from `.env`, sensitive flag, last updated. **Never values.** ([example](07-profiles.md#commands)) | ✅ |
+| `arca list` / `ls` | Every variable and where it comes from: arca / inherited / which `.env` file / missing, secret or config, last updated. With several profiles (and no `--profile`) it's a names × profiles matrix ([example](07-profiles.md#commands)). **Never values.** | ✅ |
 | `arca check [--strict] [--all-profiles]` | Validate required vars for a profile from arca, the shell env, and `.env` files (for `sensitive: false` vars). Exit 1 with the missing names. A sensitive var found only in a `.env` file counts as present but warns. `--strict` also fails on leak-guard findings. CI-friendly. | ✅ |
 | `arca run [--profile p] [opts] -- cmd` | Run with the active profile's secrets injected (or `--profile`'s), output always masked (see [03 §7](03-architecture.md#7-runner-arca-run)) | ✅ only through a verified package script |
 | `arca use [profile] [--reset]` | Show or switch the active profile for this project on this machine. Every `arca run` follows it ([07](07-profiles.md#switching-profiles)). | ✅ |
-| `arca reveal NAME [--copy]` | Show (or copy, auto-clearing) a value | 🔒 human gate |
-| `arca export [--format dotenv\|json\|shell]` | Escape hatch for tools that need a file | 🔒 human gate |
-| `arca import [files…] [--profile p] [--only A,B] [--include-public] [--delete]` | Import entries from dotenv files (default: the project's `.env*` set) into arca. Entries that look non-sensitive are skipped unless `--include-public`. **Files are left untouched by default.** `--delete` removes *only the imported entries* from each file, keeping comments and config lines, and deletes a file only if nothing is left. | 🔒 human gate |
-| `arca restore NAME` | Restore the previous value of a key | 🔒 human gate |
+| `arca reveal NAME` | Show a value (`--copy` with auto-clear comes in Phase 2; it's refused for now) | 🔒 human gate |
+| `arca export [--format dotenv\|json\|shell] [--output file]` | Escape hatch for tools that need a file. `--output` writes a `0600` file and warns that it holds plaintext. | 🔒 human gate |
+| `arca import [files…] [--profile p] [--only A,B] [--include-public] [--delete] [--yes]` | Import entries from dotenv files (default: whichever of `.env`, `.env.development`, `.env.local`, `.env.development.local` exist at the project root) into arca. A value that already differs in arca is only overwritten after a confirm (or with `--yes`). A value equal to the one the profile inherits stays inherited. Entries that look non-sensitive are skipped unless `--include-public`. **Files are left untouched by default.** `--delete` removes *only the imported entries* from each file, keeping comments and config lines, and deletes a file only if nothing is left. | 🔒 human gate |
+| `arca restore NAME` | Restore the previous value of a key, or bring back a value removed with `unset`. Run it again to undo. | 🔒 human gate |
 | `arca profiles [add\|diff\|copy\|rm]` | Manage profiles ([07](07-profiles.md#commands)) | list/diff/add ✅ · copy/rm 🔒 |
-| `arca projects [rm]` | List or remove vaults on this machine | list ✅ / rm 🔒 |
-| `arca policy [show\|set\|allow\|deny]` | Agent policy for this project (stored in the vault) | show ✅ / change 🔒 |
-| `arca scan [paths] [--staged]` | Find stored secret values in files (exact match + variants). Prints `file:line NAME` only. | ✅ |
-| `arca hook install` | Add a pre-commit hook running `arca scan --staged` (or print the lefthook/husky line) | ✅ |
-| `arca doctor` | Diagnose keychain backend, store path, project resolution, detected context ("you look like an agent: claude-code via CLAUDECODE"), unwrapped scripts, leak-guard findings in `.env*` files (file, key and rule, never values), `envFiles` pitfalls, credential-receiving URLs in `.env`, short sensitive values, ID collisions | ✅ |
+| `arca projects [rm <id>]` | List or remove vaults on this machine | list ✅ / rm 🔒 |
+| `arca policy [show]` / `arca policy set agent-run scripts\|deny` | Agent policy for this project (stored in the vault). `approved` with `policy allow …` comes in Phase 2. | show ✅ / change 🔒 |
+| `arca scan [paths] [--staged]` | *Phase 2.* Find stored secret values in files (exact match + variants). Prints `file:line NAME` only. | ✅ |
+| `arca hook install` | *Phase 2.* Add a pre-commit hook running `arca scan --staged` (or print the lefthook/husky line) | ✅ |
+| `arca doctor` | Diagnose context ("You look like an AI agent: claude-code via CLAUDECODE"), key storage and master key, store path, project and ID collisions, stored and missing secrets per profile, short sensitive values, wrapped and unwrapped scripts, `envFiles` pitfalls, leak-guard findings in `.env*` files with the fix (file, key and rule, never values), credential-receiving URLs in `.env`, agent policy. Exit 1 on problems. | ✅ |
 
-Global flags: `--profile <name>` / `-p` (beats `ARCA_PROFILE`, which beats the active profile from `arca use`), `--project-dir <path>`, `--json` (machine output for list/check/doctor), `--quiet`.
+Global flags: `--profile <name>` / `-p` on every value command (beats `ARCA_PROFILE`, which beats the active profile from `arca use`), `--project-dir <path>`, `--json` (machine output for `list`, `check`, `use`, `profiles` and `profiles diff`), `--quiet` / `-q`, `--help`, `--version`.
 
 **`arca set NAME value` as a positional argument** is accepted but prints *"⚠ value passed on the command line; it may be in your shell history"* (confirmed: warn, don't refuse).
 
@@ -88,47 +88,66 @@ Global flags: `--profile <name>` / `-p` (beats `ARCA_PROFILE`, which beats the a
 $ npm i -D @bremmdev/arca-env
 $ npx arca init
 ◇ Project name … acme-web
-◇ Detected Next.js 16 (next dev / next build)
-◇ No .env files found (non-sensitive config can go in .env as usual, secrets go in arca)
-◇ Wrap package.json scripts?  dev, build, test  (yes)
-◇ Add a "Secrets (arca)" section to AGENTS.md?  (yes)
+◇ Detected Next.js 16.4.0
+◇ No .env files with values found. Secrets go in arca (`npx arca set NAME`), non-sensitive config can stay in .env.
 ✔ Created arca.json (id arc_7k2m…)
-✔ Master key created in Windows Credential Manager
-Next: arca set DATABASE_URL   or   arca setup
+◇ Wrap these package.json scripts with `arca run`, so they get secrets?  dev, build, test
+✔ Wrapped scripts: dev, build, test
+    dev: "next dev"  →  "arca run -- next dev"
+    …
+◇ Not wrapped:
+    start: production start, left alone on purpose (the host provides the env, and arca may not be installed there)
+    lint: eslint doesn't need secrets (wrap by hand if it does: arca run -- eslint .)
+◇ Add "start:local" to run the production build locally with your secrets?  (yes)
+✔ Added "start:local": "arca run -- next start"
+◇ Create AGENTS.md with a short "Secrets (arca)" section for AI agents?  (yes)
+✔ Created AGENTS.md with the "Secrets (arca)" section
+
+Next: npx arca set DATABASE_URL   or   npx arca setup
 ```
+
+The master key is created on the first write (`set`, `setup`, `import`), not by `init` itself.
 
 ## Flow 2: migrating an existing project
 
 ```console
 $ npx arca init
-◇ Detected Vite + TanStack Start
-◇ Found .env (4 vars), .env.local (6 vars), .env.test (2 vars)
-◇ Sort variables. Secrets move to arca, config stays in .env:
-    → arca    DATABASE_URL, STRIPE_SECRET_KEY, AUTH_SECRET, RESEND_API_KEY, … (9)
-    stays     PORT, VITE_PUBLIC_URL, LOG_LEVEL (3)
-  Adjust the split?  (no)
-◇ Profiles:  .env + .env.local → development    .env.test → test (extends development)
-✔ Imported 9 secrets into arca
-✔ Declared 12 variables in arca.json (9 sensitive, 3 config)
-✔ Wrapped scripts: dev, build, test, db:migrate
+◇ Detected TanStack Start 1.169.0
+◇ Found .env (4 vars), .env.local (6 vars)
+◇ Which of these are secrets? Secrets move to arca, the rest stays in .env as config.
+    → arca    DATABASE_URL, STRIPE_SECRET_KEY, AUTH_SECRET, RESEND_API_KEY, …
+    stays     PORT, VITE_PUBLIC_URL, LOG_LEVEL
+◇ Create profile acceptatie from .env.acceptatie (extends default, 2 secrets of its own, 1 config line stays in the file)?  (yes)
+✔ Profile acceptatie (extends default): 2 → arca, config stays in .env.acceptatie
+◇ Left alone: .env.test (framework mode files, your framework loads them itself)
+✔ Created arca.json (id arc_7k2m…)
+✔ Master key created in Windows Credential Manager
+✔ Imported 11 secrets into arca (default: 9, acceptatie: 2)
 ✔ Your .env files were not changed
-⚠ The 9 secrets still have plaintext copies in .env, .env.local and .env.test.
-  Remove just those entries (config lines stay):   npx arca import --delete
+✔ Wrapped scripts: dev, build, test, db:migrate
+…
+⚠ The 11 secrets still have plaintext copies in .env, .env.local, .env.acceptatie.
+  Remove just those entries (config lines stay):
+    npx arca import --delete
+    npx arca import .env.acceptatie --profile acceptatie --delete
+
+Switch profiles with  npx arca use acceptatie  (and back with  npx arca use --reset)
 ```
 
-- Sorting uses the leak-guard heuristics ([03 §8](03-architecture.md#8-coexisting-with-env-files-and-the-leak-guard)). Public prefixes (`NEXT_PUBLIC_*`, `VITE_*`, `PUBLIC_*`) and names that don't look secret are suggested to stay. You can always adjust the split.
-- When a key is in several files, import follows framework precedence: `.env.local` overrides `.env`, and `.env.<mode>.local` overrides `.env.<mode>`.
+- Sorting uses the leak-guard heuristics ([03 §8](03-architecture.md#8-coexisting-with-env-files-and-the-leak-guard)). Keys already declared in `arca.json` follow their `sensitive` flag. Public prefixes (`NEXT_PUBLIC_*`, `VITE_*`, `PUBLIC_*`, …) and names that don't look secret are suggested to stay. You adjust the split in the multiselect. Secrets are declared `required: true`, config `sensitive: false`.
+- `init` reads `.env`, `.env.development`, `.env.local` and `.env.development.local`. When a key is in several files, the later file in that list wins, matching framework precedence.
+- Every other `.env.<name>` file is offered as a profile, except framework mode files (`.env.development`, `.env.production`, `.env.test` and their `.local` variants) and templates (`.example`, `.sample`, …), which are left alone ([07](07-profiles.md#importing-per-profile)).
 - Until the plaintext copies are gone, every `arca run` prints a one-line leak-guard reminder. It's never blocking.
 - `.gitignore` is left alone. Once the leak guard is clean, committing a config-only `.env` (the usual Next/Vite convention) is safe again.
 - `dotenv.config()` calls in your code keep working, because they load the config-only files as before.
 
-**If an agent runs `arca init`** (e.g. you asked it to "set up arca"), it gets everything *except* the import. It creates `arca.json` with the variable names it found, wraps the scripts and writes the AGENTS.md section, then stops:
+**If an agent runs `arca init`** (e.g. you asked it to "set up arca"), it gets everything *except* the import. Without a terminal it takes every default: it creates `arca.json` with the variable names it found, wraps the scripts and writes the AGENTS.md section, and tells the user to import:
 
 ```
-✔ Created arca.json with 12 variable names (9 look sensitive, 3 config)
-✔ Wrapped scripts: dev, build, test, db:migrate
+✔ Created arca.json (id arc_7k2m…)
 ✋ Moving secret values into arca needs a human. Ask the user to run:  npx arca import
    (the .env files stay untouched)
+✔ Wrapped scripts: dev, build, test, db:migrate
 ```
 
 ## Flow 3: a teammate clones the repo
@@ -136,17 +155,22 @@ $ npx arca init
 ```console
 $ npm install
 $ npm run dev
-arca: 3 required variables are not set for acme-web (development):
+arca: 3 required variables are not set for acme-web:
   DATABASE_URL, STRIPE_SECRET_KEY, AUTH_SECRET
-Run `npx arca setup` to set them. Takes about a minute.
+Run `npx arca setup` to set them. Takes about a minute. (AI agents: ask the user to run it.)
 
 $ npx arca setup
+arca: 3 variables to set for acme-web. Leave a prompt empty to skip it.
+
 ◆ DATABASE_URL: Local Postgres connection string
   example: postgres://postgres:postgres@localhost:5432/acme
   › ••••••••••••••••••
-◆ STRIPE_SECRET_KEY: get it at https://dashboard.stripe.com/test/apikeys
+◆ STRIPE_SECRET_KEY
+  get it at https://dashboard.stripe.com/test/apikeys
   › ••••••••••••••••
-◆ AUTH_SECRET: generate a random value?  (yes)
+◆ AUTH_SECRET
+  Generate a random value for AUTH_SECRET?  (yes)
+
 ✔ All required variables set. Run `npm run dev`.
 ```
 
@@ -166,9 +190,10 @@ The scripts stay as they are. They follow whichever profile is active:
 
 ```console
 $ npx arca profiles add acceptatie --extends ontwikkel
-✔ Added profile acceptatie to arca.json (values not set here come from ontwikkel)
+✔ Added profile acceptatie (extends ontwikkel, so it only stores what differs) to arca.json
 $ npx arca set DATABASE_URL --profile acceptatie
-◆ DATABASE_URL (acceptatie) › ••••••••••••••••
+◆ DATABASE_URL › ••••••••••••••••
+✔ Set DATABASE_URL for acme-web (profile acceptatie)
 $ npx arca use acceptatie
 ✔ acme-web now uses profile acceptatie for every arca run on this machine
 $ npm run dev
@@ -185,14 +210,16 @@ $ npx arca use --reset
 ## Flow 5: CI, Vercel and production
 
 - Nothing to do. On Vercel or in CI there's no vault, so wrapped scripts pass through and validate the declared required names against the platform's env.
-- `"start": "next start"` stays unwrapped, so production images built with `--omit=dev` don't need arca. Add `"start:local": "arca run -- next start"` if you want to test locally.
+- `"start": "next start"` stays unwrapped, so production images built with `--omit=dev` don't need arca. `arca init` offers `"start:local": "arca run -- next start"` to test the production build locally.
 - If Vercel is the source of truth, import from it (Phase 3: `arca pull vercel`).
 
 ## What `arca init` changes in `package.json`
 
-- Wraps dev-time scripts that run known tools: `next`, `vite`, `astro`, `nuxt`/`nuxi`, `react-router`, `remix`, `svelte-kit`, `vinxi`, `tsx`, `node`, `vitest`, `jest`, `playwright`, `prisma`, `drizzle-kit`, `wrangler`, `turbo`, `nodemon`.
-- It's idempotent (never double-wraps) and asks before touching each script. It prints a diff.
-- `arca init --undo` (or just the reverse sed) removes the wrappers.
+- Wraps scripts whose first command is a known tool: `next`, `vite`, `astro`, `nuxt`/`nuxi`, `react-router`, `remix`, `svelte-kit`, `vinxi`, `tsx`, `node`, `ts-node`, `tsup`, `vitest`, `jest`, `playwright`, `prisma`, `drizzle-kit`, `wrangler`, `turbo`, `nodemon`, `tanstack`, `storybook`/`start-storybook`, `netlify`, `vercel`, `nest`, `expo`, `react-scripts`, `webpack` (also behind `npx`, `bunx`, `dotenv`, `pnpm exec`, `yarn exec`). `start` is never wrapped.
+- Compound scripts (`&&`, `;`, pipes), inline env vars and `cross-env` are left for you to wrap by hand.
+- It's idempotent (never double-wraps). In a terminal you pick the scripts in one multiselect; it then prints `before → after` for each wrapped script, and lists every script it left alone with the reason.
+- It offers `start:local` (`arca run -- <start>`) when there's a `start` script that runs a known tool.
+- There's no `--undo` yet. To remove the wrappers, delete `arca run -- ` from the scripts.
 
 ## Messages written for agents
 
@@ -203,30 +230,39 @@ Agents follow instructions in error output very reliably, so the refusal message
 ```
 arca: secret values cannot be shown to AI agents (detected: claude-code via CLAUDECODE).
 You don't need the values. Secrets are injected automatically when you run package
-scripts, for example `npm run dev` or `npm test`. Their output is redacted as [arca:NAME].
-  • See which variables exist:   arca list
-  • Check that they are set:     arca check
-  • A value is missing or wrong: ask the user to run `arca set NAME`
-  • Need a new random secret:    ask the user to run `arca set NAME --generate`
+scripts, for example `npm run dev` or `npm test`. Their output is masked as [arca:NAME].
+  • See which variables exist:   npx arca list
+  • Check that they are set:     npx arca check
+  • A value is missing or wrong: ask the user to run `npx arca set NAME`
+  • Need a new random secret:    ask the user to run `npx arca set NAME --generate`
 ```
 
-**Agent tries to change a value** (`set`, `unset`, `import`, `restore`, `setup`):
+**Agent tries to change a value** (`set`, `unset`, `import`, `restore`, `setup`, `profiles copy/rm`, `policy set`):
 
 ```
 arca: only a human can change secret values (detected: claude-code via CLAUDECODE).
 Ask the user to run this in their own terminal:
-    arca set STRIPE_SECRET_KEY
+    npx arca set STRIPE_SECRET_KEY
 If this is a new variable, you can declare it in arca.json under "vars" first,
-so `arca check` and `arca setup` know about it.
+so `npx arca check` and `npx arca setup` know about it.
 ```
 
 **Agent tries an ad-hoc command:**
 
 ```
-arca: AI agents can only use secrets through package.json scripts
-(detected: codex via CODEX_SANDBOX).
-Run the command through a package.json script that uses `arca run`, e.g. `npm run db:migrate`.
+arca: AI agents can only use secrets through package.json scripts (detected: codex via CODEX_SANDBOX).
+Refused: arca run -- node -e console.log(process.env)
+Run the command through a package.json script that uses `arca run`, e.g. `npm run dev`.
 If no script exists for what you need, ask the user to add one.
+```
+
+When the caller *is* a package script that fails verification, a line after the first says why, e.g. `(Not accepted as a package script: the command doesn't match the "dev" script.)`.
+
+**Agent policy is `deny`:**
+
+```
+arca: the user has turned off secrets for AI agents in this project (detected: claude-code via CLAUDECODE).
+Ask the user to run the command themselves.
 ```
 
 **Redacted output** reads naturally:
@@ -237,6 +273,8 @@ Error: connect ECONNREFUSED. Connection string: postgres://app:[arca:DATABASE_UR
 
 ## AGENTS.md / CLAUDE.md snippet (written by `arca init`, opt-in)
 
+`init` appends this to `AGENTS.md` and/or `CLAUDE.md` when they exist, or offers to create `AGENTS.md` when neither does. The source of truth is `agentsSnippet()` in `src/messages.ts`:
+
 ```md
 ## Secrets (arca)
 
@@ -245,14 +283,15 @@ Secrets are stored outside the repo with arca and injected when commands run.
 
 - Run the app, tests and tools through package scripts (`npm run dev`, `npm test`, …),
   which wrap commands in `arca run`. Ad-hoc `arca run -- <cmd>` is refused for agents.
-  Output is always redacted: secrets appear as `[arca:NAME]`.
-- `arca list` shows which variables exist. `arca check` verifies required ones are set.
-- The active profile (set of values) is shown in the `arca ▸ profile …` banner. Don't
-  switch it with `arca use` unless the user asks.
-- Do not try to read secret values (`arca reveal`, printing `process.env`, reading the
+  Output is always masked: secrets appear as `[arca:NAME]`.
+- `npx arca list` shows which variables exist. `npx arca check` verifies required ones are set.
+- A project can have several profiles (sets of values). A run that doesn't use the default
+  profile starts with an `arca ▸ profile …` line. Don't switch profiles with `npx arca use`
+  unless the user asks: it also changes what the user's own terminals use.
+- Do not try to read secret values (`npx arca reveal`, printing `process.env`, reading the
   arca store).
 - Only the user can set or change values. If a value is missing or wrong, ask the user
-  to run `arca set NAME` (or `arca set NAME --generate` for a random secret).
+  to run `npx arca set NAME` (or `npx arca set NAME --generate` for a random secret).
 - To add a secret: declare it in `arca.json` under `vars`, then ask the user to set it.
   To add non-sensitive config: put it in `.env` and declare it with `"sensitive": false`.
 - Never put secrets (keys, tokens, passwords, connection strings with credentials) in
@@ -263,15 +302,15 @@ Secrets are stored outside the repo with arca and injected when commands run.
   the arca store or the OS keychain. If arca blocks you, ask the user.
 ```
 
-The last bullet (added 2026-10-22) targets arca's real opponent: a well-meaning agent that treats a refusal as an obstacle to engineer around. It's a stop sign, not a barrier. Re-running `arca init` replaces an outdated section in place.
+The last bullet (added 2026-10-22) targets arca's real opponent: a well-meaning agent that treats a refusal as an obstacle to engineer around. It's a stop sign, not a barrier. Re-running `arca init` offers to replace an outdated section in place.
 
-Optionally (asked during init), arca also adds agent-tool deny rules where they exist, such as Claude Code `permissions.deny` entries for `Bash(arca reveal:*)`, `Bash(arca export:*)`, `Bash(arca set:*)`, `Bash(arca import:*)` and reads of the store path. Agents then don't even try commands arca would refuse anyway. These are a second layer only, since third-party reports show deny rules don't cover every path to a file.
+*Not built yet (Phase 2):* optionally (asked during init), arca also adds agent-tool deny rules where they exist, such as Claude Code `permissions.deny` entries for `Bash(arca reveal:*)`, `Bash(arca export:*)`, `Bash(arca set:*)`, `Bash(arca import:*)` and reads of the store path. Agents then don't even try commands arca would refuse anyway. These are a second layer only, since third-party reports show deny rules don't cover every path to a file.
 
 ## Small DX details that matter
 
 - `arca list` output is aligned and colour-coded, `--json` for scripts. Missing required vars show in red.
-- `arca` with no args, run inside a project, shows a status summary: project, active profile (and why), completeness per profile, policy, context.
-- Typos: `arca set DATABSE_URL` → "Did you mean DATABASE_URL (declared in arca.json)?"
-- Every command finishes well under 100 ms. Slowness kills wrapper tools.
+- `arca` with no args, run inside a project, shows a status summary: version, project, active profile (and why), stored and missing secrets for that profile, agent policy, who you look like (human, agent, non-interactive), store path, and the next step.
+- Typos: `arca set DATABSE_URL` → "DATABSE_URL isn't declared in arca.json. Did you mean DATABASE_URL?". Unknown commands and profile names get the same "Did you mean" hint.
+- Goal: every command finishes well under 100 ms, because slowness kills wrapper tools. `arca run` measured about 100 ms on Windows (S1).
 - `NO_COLOR` and `FORCE_COLOR` are respected, and Windows Terminal, PowerShell and cmd.exe are all first-class, as are macOS and Linux shells.
 - Docs include a one-page "How is this different from dotenvx/Doppler/1Password?" that links back to [01](01-prior-art.md).

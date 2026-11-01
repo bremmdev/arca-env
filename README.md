@@ -12,6 +12,8 @@ arca moves the secrets in your `.env` / `.env.local` into an encrypted store out
 
 ## Quick start
 
+Requires Node 24 or newer.
+
 ```console
 npm i -D @bremmdev/arca-env
 npx arca init

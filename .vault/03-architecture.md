@@ -5,7 +5,7 @@
 ```mermaid
 flowchart LR
   subgraph Repo["Project repo (committed)"]
-    CFG["arca.json\n(id, names, schema,\nnon-secret defaults)"]
+    CFG["arca.json\n(id, names, profiles,\nnever values)"]
     PKG["package.json scripts\n'dev': 'arca run -- next dev'"]
     ENV[".env files\n(non-sensitive config only)"]
   end
@@ -34,17 +34,20 @@ Modules (one npm package, internal boundaries):
 
 | Module | Responsibility |
 |---|---|
-| `config` | Find and parse `arca.json` (walk up from cwd), validate against JSON Schema, resolve profiles (`extends`, per-profile `envFiles`, active profile) |
+| `config` | Find and parse `arca.json` (walk up from cwd), validate it with hand-written checks that mirror `schema.json`, resolve profiles (`extends`, per-profile `envFiles`) |
+| `session` | Per-invocation state: picks the profile (`--profile` > `ARCA_PROFILE` > `arca use` > `defaultProfile`), reads and writes vaults along the `extends` chain, migrates a pre-profiles `default.vault`, collects every profile's secrets for masking |
 | `envfiles` | `.env*` parsing for `envFiles` injection, the leak guard and `import`. Its only write is removing entries for `import --delete`. |
-| `store` | Paths, atomic read/write of vault files, locking, registry |
-| `crypto` | Master-key handling, HKDF per project, AES-256-GCM envelope (node:crypto only) |
-| `keychain` | Adapter over `@napi-rs/keyring` with a backend probe and fallbacks |
+| `leakguard` | Checks `.env*` files for stored values, declared-sensitive keys and secret-looking values (§8) |
+| `store` | Paths, atomic read/write of vault, policy and state files, locking, registry |
+| `crypto` | HKDF per project and profile, AES-256-GCM envelope, scrypt wrapping for passphrase mode (node:crypto only) |
+| `keychain` | Adapter over `@napi-rs/keyring`, backend choice (OS keychain or passphrase) |
 | `context` | Agent detection, TTY detection, script-invocation verification, CI detection |
-| `policy` | Decides allow/deny/redact for each operation and context |
+| `policy` | The run decision for agents and the human gate (with the typed challenge) |
 | `runner` | Cross-platform spawn, env merge, signal forwarding, exit codes, stdio strategy |
-| `redact` | Streaming multi-needle replacer for stdout/stderr (and `register` stream patching) |
-| `cli` | Commands, prompts, messages (incl. agent-oriented error text) |
-| `register` | Optional in-process loader (`node --import @bremmdev/arca-env/register`) |
+| `redact` | Streaming multi-needle replacer for stdout/stderr |
+| `guard` | Console guard preloaded into every Node child of `arca run` (`dist/guard.mjs`), masks `console.*` arguments in-process ([02 L11](02-threat-model.md#leak-channels-and-mitigations)) |
+| `main`, `commands/*` | Argument parsing, commands, prompts, messages (incl. agent-oriented error text) |
+| `register` | *Phase 2, not built:* in-process loader (`node --import @bremmdev/arca-env/register`) |
 
 ## 1. Project identity and config
 
@@ -52,7 +55,7 @@ Modules (one npm package, internal boundaries):
 - **Why an ID and not the path:** worktrees (agent tools create them constantly), re-clones, moved folders and renamed directories should all map to the same secrets. Path-based binding (Doppler's model) breaks all of these.
 - Resolution: walk up from `cwd` to the nearest `arca.json`. If there's none, the project context is empty and `arca run` passes through (see §7).
 - Monorepos: each app can have its own `arca.json` (own id), or share the root one. The nearest file wins. Workspace packages without their own file inherit the root project.
-- **Collision guard:** `registry.json` maps `id → { name, gitRemote, roots[] }`. If an ID shows up under a different git remote that doesn't share the worktree's common git dir, warn: *"arca.json id `arc_…` is also used by `~/code/other-app` (different repo). Run `arca init --new-id` if these should not share secrets."* This catches cloned templates and starter kits.
+- **Collision guard:** `registry.json` maps `id → { name, gitRemote, roots[] }`. When values are written (and in `arca doctor`), arca compares the project's `remote.origin.url` with the one recorded for the ID. If they differ, it warns: *"arca.json id `arc_…` is also used by `~/code/other-app` (git remote …). Two different repos share secrets. If that is wrong, run `npx arca init --new-id` in one of them."* This catches cloned templates and starter kits. Worktrees and clones of the same repo share the remote, so they don't trigger it.
 - Config is **JSON, not JS/TS**: parsing it never executes code, so a malicious change can't run during resolution. It gets editor autocomplete via `$schema`.
 - `arca.json` never contains values. Non-sensitive values belong in `.env` files (§8).
 
@@ -60,17 +63,18 @@ Modules (one npm package, internal boundaries):
 
 ```
 <store root>
-  config.json            # global, non-secret prefs (policy defaults, redaction, extra agent markers)
+  config.json            # global, non-secret prefs: "keychain" ("os" | "passphrase"), "agentMarkers"
   registry.json          # non-secret: id -> name, roots, git remote, lastUsed
   master.key.enc         # ONLY in passphrase mode (master key wrapped by scrypt(passphrase))
   projects/
     arc_7k2m.../                 # one directory per project
-      ontwikkel.vault            # encrypted vault, one per profile (see 07)
+      ontwikkel.vault            # encrypted vault, one per profile (see 07); "default.vault"
+                                 # when arca.json declares no profiles
       ontwikkel.vault.bak        # previous version (one-deep backup on each write)
       acceptatie.vault
-      policy.vault               # encrypted, human-only project policy: agent run policy,
-                                 # approved scripts
+      policy.vault               # encrypted, human-only project policy (agent run policy)
       state.json                 # non-secret: active profile set with `arca use`
+      .lock                      # held while writing (taken over when older than 10 s)
 ```
 
 Store root per platform, overridable with `ARCA_HOME`:
@@ -89,7 +93,7 @@ Store root per platform, overridable with `ARCA_HOME`:
 
 **Envelope encryption with one master key:**
 
-- Master key: 32 bytes from `crypto.randomBytes`, created on first use and stored in the OS keychain (service `arca`, account `master-key/v1`).
+- Master key: 32 bytes from `crypto.randomBytes`, created on the first write (`set`, `import`, `setup`, `policy set`) and stored in the OS keychain (service `arca`, account `master-key/v1`). A store at a custom `ARCA_HOME` gets its own account (`master-key/v1/<hash of the path>`), so two stores never share a key by accident. arca refuses to create a new key while encrypted vaults exist, because they could never be decrypted again.
 - Per-profile key: `HKDF-SHA256(masterKey, salt = projectId, info = "arca/vault/v1/<profile>")`. The policy file uses `info = "arca/policy/v1"`. This lets a later "export one project" feature re-wrap just one project, and means a bug in one project's handling can't cross-decrypt another.
 - Vault file is a JSON envelope:
 
@@ -116,20 +120,23 @@ Store root per platform, overridable with `ARCA_HOME`:
   "vars": {
     "DATABASE_URL": { "value": "postgres://…", "updatedAt": "2026-10-21T10:00:00Z", "source": "import:.env.local", "previous": null }
   },
-  "meta": { "createdAt": "…", "schemaHash": "…" }
+  "removed": {
+    "OLD_API_KEY": { "value": "…", "updatedAt": "…" }
+  },
+  "meta": { "createdAt": "…" }
 }
 ```
 
-- Plaintext payload of `policy.vault`:
+- `source` is `set`, `stdin`, `generate`, `setup`, `restore`, `import:<file>` or `copy:<profile>`.
+- Plaintext payload of `policy.vault` (`"scripts"` or `"deny"`; an `approvedScripts` list comes with the `approved` policy in Phase 2):
 
 ```json
 {
-  "agentRun": "scripts",
-  "approvedScripts": []
+  "agentRun": "deny"
 }
 ```
 
-- `previous` keeps one prior value per key, so an accidental overwrite can be undone (`arca restore KEY`, human-only).
+- `previous` keeps one prior value per key, so an accidental overwrite can be undone (`arca restore KEY`, human-only). `removed` keeps the last value of each key removed with `arca unset`, so `restore` can bring it back too.
 - Only `node:crypto`, no third-party crypto.
 
 **Why not one keychain item per secret (envchain, secretspec style)?** Windows Credential Manager limits blobs to 2,560 bytes. macOS may prompt per item. Linux keyutils loses items on reboot. There's no atomic multi-key update, enumeration is slow, and items clutter the user's credential UI. One key plus a file avoids all of that, and it's the same choice psst made.
@@ -145,11 +152,12 @@ Primary: **`@napi-rs/keyring`** (Rust `keyring` crate via napi-rs, prebuilt `.no
 | Linux desktop | Secret Service (GNOME Keyring, KWallet, KeePassXC) | `@napi-rs/keyring` tries Secret Service, then falls back to kernel keyutils |
 | Linux headless / WSL / containers | **keyutils is in-memory and does not survive a reboot** | ⚠️ Never keep the *only* copy of the master key there, or a WSL restart destroys every vault. Use passphrase mode instead (below). |
 
-**Passphrase mode** (automatic when no persistent keychain exists, or opt in with `arca config set keychain passphrase`):
+**Passphrase mode** (automatic on WSL and on Linux without a D-Bus session, i.e. no `DBUS_SESSION_BUS_ADDRESS`; opt in with `ARCA_KEYCHAIN=passphrase`, or `"keychain": "passphrase"` in the store's `config.json`). The first write records the backend in `config.json`, so it stays the same afterwards:
 
-- The master key is wrapped with `scrypt(passphrase, salt, N=2^17, r=8, p=1)` → AES-256-GCM and stored as `master.key.enc` in the store.
-- The unwrapped key is cached in the **Linux keyutils user keyring with a timeout** (e.g. 12 h), so you type the passphrase once per boot or day. No daemon needed.
-- On other OSes without a keychain (rare), the MVP prompts per run, and Phase 3's session agent fixes that.
+- The master key is wrapped with `scrypt(passphrase, salt, N=2^17, r=8, p=1)` → AES-256-GCM and stored as `master.key.enc` in the store. The passphrase must be at least 8 characters.
+- In OS-keychain mode, arca reads the key back right after writing it and refuses a backend that didn't keep it (keyutils can accept writes that don't persist).
+- ⏳ **Not built yet:** caching the unwrapped key in the **Linux keyutils user keyring with a timeout** (e.g. 12 h), so you type the passphrase once per boot or day. Today passphrase mode prompts on every run unless `ARCA_PASSPHRASE` is set ([08 O1](08-issue-log.md#open-problems-and-things-not-verified-yet)).
+- On other OSes without a keychain (rare), it prompts per run too, and Phase 3's session agent fixes that.
 - `ARCA_PASSPHRASE` is supported for unattended use but documented as weak, since anything in the env is readable by the agent's shell if exported there.
 
 **Backup and recovery:** if the keychain is wiped (new machine, OS reinstall), the vaults are unrecoverable. That's acceptable for local-dev secrets, which can be re-fetched from dashboards. Provide human-only `arca backup` / `arca restore-backup` (passphrase-encrypted bundle), and surface the risk in `arca doctor`.
@@ -161,19 +169,19 @@ Every invocation builds a `Context`:
 ```ts
 type Context = {
   agent: { detected: boolean; name?: string; via?: string } // e.g. { name: 'claude-code', via: 'CLAUDECODE' }
-  interactive: boolean        // process.stdin.isTTY && process.stdout.isTTY
-  invocation:
-    | { kind: 'script'; name: string; verified: boolean }     // came from `npm run <name>`
-    | { kind: 'adhoc' }
+  interactiveOutput: boolean  // process.stdout.isTTY && process.stderr.isTTY
+  stdinIsTTY: boolean
   ci: boolean                 // CI, VERCEL, GITHUB_ACTIONS, NETLIFY, …
-  nested: boolean             // ARCA_ACTIVE already set by an outer arca run
+  activeProject: string | null // ARCA_ACTIVE: project ID of an outer arca run
 }
 ```
 
+The invocation (`{ kind: 'script', name, verified, reason? }` or `{ kind: 'adhoc' }`) is worked out separately, and only when a detected agent calls `arca run`.
+
 **Agent detection (layered, cheapest first):**
 
-1. Explicit: `ARCA_AGENT=1` (users can set it in an agent's config, e.g. Claude Code's `env` setting) or the cross-tool standard `AI_AGENT=<name>`.
-2. Known markers, from the `@vercel/detect-agent` rule list (vendored or as a dependency): Claude Code (`CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`), Cursor agent, Codex, Gemini CLI, GitHub Copilot, Devin, Replit, Antigravity, v0, OpenCode… *(exact names verified in Spike S3)*. A user list from `config.json#agentMarkers` is merged in.
+1. Explicit: `ARCA_AGENT=1` (users can set it in an agent's config, e.g. Claude Code's `env` setting) or the cross-tool standard `AI_AGENT=<name>`. A value other than `1`/`true` names the agent (`AI_AGENT=claude-code_2-1_agent` → `claude-code`). Values like `0`, `false` or `off` don't count.
+2. Known markers, in a list vendored in `src/context.ts` (based on `@vercel/detect-agent`, not a dependency): `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`, `CODEX_SANDBOX`, `CODEX_THREAD_ID`, `GEMINI_CLI`, `OPENCODE`, `AUGMENT_AGENT`, `CLINE_ACTIVE`, `GOOSE_TERMINAL`, `REPL_ID`. Only Claude Code's are verified so far (Spike S3). A user list from `config.json#agentMarkers` is merged in.
 3. Phase 2: **process-tree inspection.** Walk parent PIDs and match known agent executables (`claude`, `codex`, `cursor-agent`, `gemini`, `opencode`, …). Markers can be stripped with `env -i` and the process tree can't, but it's slower (on Windows, query via `NtQueryInformationProcess` in a native helper or a cached WMI call), so run it only when a decision depends on it (reveal, ad-hoc run).
 
 **Watch for false positives:** some IDEs set variables in *every* integrated terminal (e.g. Cursor trace IDs). Only use markers specific to agent-launched processes. When a human is misdetected, the human gate's challenge (below) lets them through.
@@ -181,12 +189,13 @@ type Context = {
 **Script verification** (for the default agent policy `scripts`):
 
 - npm, pnpm, yarn and bun set `npm_lifecycle_event` (script name) and `npm_lifecycle_script` (script text) for scripts *(verify per package manager in Spike S4)*.
-- arca loads the nearest `package.json` and checks that `scripts[npm_lifecycle_event] === npm_lifecycle_script`, and that the script text contains `arca run`. Only then is `invocation.verified = true`.
+- arca loads `package.json` (from `npm_package_json`, else the nearest one up from cwd) and checks three things: `scripts[npm_lifecycle_event] === npm_lifecycle_script`, the script contains `arca run`, and the command arca was asked to run is the one written after that `arca run` (extra arguments from `npm run dev -- --port 4000` are allowed). Only then is the invocation verified.
+- A lifecycle event that isn't a script in `package.json` counts as ad-hoc. That's how `npx` / `npm exec` look (`npm_lifecycle_event=npx`).
 - Faking this means setting env vars *and* editing `package.json`, which is deliberate and leaves a visible diff.
 
 ## 6. Policy engine
 
-Operations: `run`, `list`, `check`, `set`, `generate`, `unset`, `reveal`, `export`, `import`, `policy`, `restore`, `cross-project`.
+Operations: `run`, `list`, `check`, `set`, `generate`, `unset`, `reveal`, `export`, `import`, `policy`, `restore`.
 
 Three rules (confirmed 2026-10-21) shape the matrix:
 
@@ -202,22 +211,24 @@ Three rules (confirmed 2026-10-21) shape the matrix:
 | `run` ad-hoc (`arca run -- cmd`) | ✅ masked | ❌ deny + guidance | ✅ masked ¹ | passthrough |
 | `use` (switch the active profile, [07](07-profiles.md#switching-profiles)) | ✅ | ✅ | ✅ | n/a |
 | `list`, `check`, `doctor` | ✅ | ✅ (names only, ever) | ✅ | ✅ |
-| `init` (create `arca.json`, wrap scripts, AGENTS.md) | ✅ | ✅ (repo files only, no import) ² | ✅ | ❌ |
+| `init` (create `arca.json`, wrap scripts, AGENTS.md) | ✅ | ✅ (repo files only, no import) ² | ✅ (no import) | ✅ (no import) |
 | `set` (new, overwrite, `--generate`), `import`, `unset`, `restore`, `setup` | ✅ via human gate | ❌ deny + "ask the user" | ❌ | ❌ |
-| `reveal`, `export`, `backup` | ✅ via human gate | ❌ | ❌ | ❌ |
-| `policy` changes, `profiles rm/copy`, `projects rm`, `--project <other>` | ✅ via human gate | ❌ | ❌ | ❌ |
-| `profiles`, `profiles diff`, `profiles add` | ✅ | ✅ (names only) | ✅ | ✅ |
+| `reveal`, `export` (`backup` in Phase 2) | ✅ via human gate | ❌ | ❌ | ❌ |
+| `policy` changes, `profiles rm/copy`, `projects rm` | ✅ via human gate | ❌ | ❌ | ❌ |
+| `profiles`, `profiles diff`, `profiles add`, `policy show`, `projects` | ✅ | ✅ (names only) | ✅ | ✅ |
 
 Profiles don't appear in the matrix otherwise: every rule applies the same way to every profile.
 
 ¹ An undetected agent can't be told apart from an IDE task or git hook, and blocking those would break debug configs. Output is still masked. Phase 2 process-tree detection narrows this gap.
-² An agent can scaffold `arca.json` and wrap scripts, since it could edit those files anyway. The import step is skipped, the `.env` files stay where they are, and the user is told to run `arca import`.
+² An agent can scaffold `arca.json` and wrap scripts, since it could edit those files anyway. The import step hits the human gate and is skipped, the `.env` files stay where they are, and the user is told to run `npx arca import`. Without a terminal, `init` takes every default instead of asking.
 
 Agent run policy (`arca policy set agent-run <value>`, human-only, stored in the encrypted `policy.vault` so agents can't edit it). It can only be made **stricter** than the default:
 
 - `scripts` (default): verified package scripts only.
-- `approved`: only scripts on `approvedScripts`, which a human manages with `arca policy allow dev test`.
+- *Phase 2:* `approved`: only scripts on `approvedScripts`, which a human manages with `arca policy allow dev test`.
 - `deny`: agents never get secrets.
+
+A missing `policy.vault` means `scripts`, so deleting the file from the store loosens a `deny` ([02](02-threat-model.md#prompt-injection-walkthrough)).
 - *Phase 3:* `prompt`: same as `scripts`, plus an OS-native approval dialog before an agent's script receives secrets, cached per session (1Password model).
 
 **Human gate**, used for every write plus reveal/export/policy:
@@ -230,23 +241,30 @@ Agent run policy (`arca policy set agent-run <value>`, human-only, stored in the
 ## 7. Runner (`arca run`)
 
 ```
-arca run [--profile <name> | -p <name>] [--only A,B] [--passthrough] [--pty | --no-pty] [--] <command> [args...]
+arca run [--profile <name> | -p <name>] [--only A,B] [--passthrough] [--no-override] [--] <command> [args...]
 ```
 
-1. **Resolve context, config and profile** (`--profile` > `ARCA_PROFILE` > active profile from `state.json` > `defaultProfile`, see [07](07-profiles.md#switching-profiles)). If `ARCA_ACTIVE` is set for the same project and profile (e.g. `npm run dev` → `arca run -- turbo dev` → workspace `arca run …`), skip decryption and redaction setup, `exec` the command directly, and let the outer arca keep redacting. A different project or profile means a full nested run. For a non-default profile, print the profile banner to stderr.
+(`--pty` / `--no-pty` come with PTY mode in Phase 2.)
+
+1. **Resolve context, config and profile** (`--profile` > `ARCA_PROFILE` > active profile from `state.json` > `defaultProfile`, see [07](07-profiles.md#switching-profiles)). Nested runs:
+   - `ARCA_ACTIVE` names the same project and `ARCA_PROFILE` the same profile (e.g. `npm run dev` → `arca run -- turbo dev` → workspace `arca run …`): skip decryption, the policy check and redaction setup, spawn the command with the inherited env, and let the outer arca keep redacting.
+   - Same project, different profile (an outer run starts a script pinned with `--profile test`): a full nested run. It first drops the values the outer run injected for its profile (vault values and `envFiles` values that still equal the outer profile's), so the inner profile never inherits values it doesn't have.
+   - A different project: a full nested run.
+
+   For a non-default profile, print the profile banner to stderr.
 2. **Passthrough rules:**
    - No `arca.json` found: run the command unchanged and print one hint to stderr (suppressed in CI).
-   - `arca.json` found but no vault for this ID and profile on this machine, and `ci` true (or `--passthrough`): run unchanged, but **validate** that the *selected profile's* required vars exist in `process.env` and fail with a list of missing *names* otherwise. This makes `arca run -- next build` a free deploy checklist on Vercel and CI.
-   - No vault and not CI: fail with *"No secrets stored for `acme-web` on this machine yet. Run `npx arca setup`."* Exception: if there are no required vars, run with a warning.
+   - `arca.json` found but no vault for this ID and profile (or any profile it extends) on this machine, and `ci` true (or `--passthrough`): run unchanged, but **validate** that the *selected profile's* required vars exist in `process.env` or a `.env` file and fail with a list of missing *names* otherwise. This makes `arca run -- next build` a free deploy checklist on Vercel and CI.
+   - No vault and not CI: fail with the missing names and *"Run `npx arca setup` to set them"* when a required **secret** is missing from the env and the `.env` files. Otherwise run without secrets, with a one-line note.
 3. **Policy check** (above). Denials print agent-oriented guidance (see [04](04-cli-and-dx.md#messages-written-for-agents)).
-4. **Env merge (confirmed):** `{ ...envFiles(profile) (opt-in, §8), ...process.env, ...vault(profile + extends chain) }`. **Vault values win** over the inherited shell env, which wins over `.env` files. *Rationale:* `arca run` is an explicit request, and stale exports in a shell are a classic source of "works on my machine". When a vault value overrides a *different* inherited value, print one line per run with names only: `arca: DATABASE_URL from arca overrides a different value inherited from your shell`. `--no-override` reverses vault vs shell for a single run. Add `ARCA_ACTIVE=1`, `ARCA_PROJECT=<name>`, `ARCA_PROFILE=<profile>`. Strip arca-internal vars like `ARCA_PASSPHRASE`.
+4. **Env merge (confirmed):** `{ ...envFiles(profile) (opt-in, §8), ...process.env, ...vault(profile + extends chain) }`. **Vault values win** over the inherited shell env, which wins over `.env` files. *Rationale:* `arca run` is an explicit request, and stale exports in a shell are a classic source of "works on my machine". When a vault value overrides a *different* inherited value, print one line per run with names only: `arca: DATABASE_URL from arca overrides a different value inherited from your shell`. `--no-override` reverses vault vs shell for a single run. Add `ARCA_ACTIVE=<project id>`, `ARCA_PROJECT=<name>`, `ARCA_PROFILE=<profile>`, and the console guard (`NODE_OPTIONS=--import=<dist/guard.mjs>`, names of the injected secrets in `ARCA_MASK`). Strip `ARCA_PASSPHRASE`. Fail with the missing names if a required var is still missing after the merge.
 5. **Spawn** with `cross-spawn` semantics. On Windows that means `.cmd` shims (`next.cmd`, `npm.cmd`), PATHEXT and argument quoting. Use `shell: false`.
 6. **Stdio: output is always masked.** There's no flag, env var or config to turn masking off. Agents that read the human's terminal buffer (some IDE agents can) are covered too. Only the transport varies:
    - **Pipe mode** (MVP, always available): stdin is inherited, so keypresses, Ctrl+C and Vite's shortcuts still reach the child. stdout/stderr are **piped through the redactor**. The child sees `stdout.isTTY === false`, so arca forwards `FORCE_COLOR` (at the parent's colour depth, unless `NO_COLOR`) and `COLUMNS`/`LINES` from the parent terminal. The 1Password forum recommends the same workaround.
    - **Known pipe-mode papercuts:** tools that check `stdout.isTTY` before showing interactive prompts or spinners (clack/inquirer prompts, some progress bars, possibly `prisma migrate dev`'s name prompt) may fall back to non-interactive behaviour. Spike S2 lists exactly which ones.
    - **PTY mode** (Phase 2): the child runs in a pseudo-terminal (`node-pty`, an optional dependency, ConPTY on Windows). arca reads the PTY output, masks it, writes it to its own stdout, forwards raw stdin and resize events, and the child gets genuine TTY behaviour. It's chosen automatically when the parent stdout is a TTY and `node-pty` is installed. `--pty` / `--no-pty` override that. Masking is identical in both modes.
-7. **Signals and exit:** forward `SIGINT`, `SIGTERM`, `SIGHUP` (and `SIGBREAK` on Windows) to the child. On Windows, Ctrl+C reaches the whole console group anyway, so don't double-kill: just wait. Exit with the child's code, or `128 + signal` if it was killed by a signal. Flush the redactor before exiting.
-8. **Overhead budget:** under 80 ms on top of the child. Node startup is about 40 ms, the keychain read 5–30 ms, decryption under 1 ms. Lazy-load everything not needed for `run`, and ship one bundled ESM file.
+7. **Signals and exit:** forward `SIGTERM` and `SIGHUP` to the child, and `SIGINT` only when stdin isn't a terminal: Ctrl+C in a terminal already reaches the whole process group, so forwarding it would look like a second Ctrl+C. On Windows only `SIGTERM` is forwarded, since Ctrl+C and `SIGBREAK` reach the whole console anyway. Exit with the child's code, or `128 + signal` if it was killed by a signal. Flush the redactor before exiting.
+8. **Overhead budget:** under 80 ms on top of the child. Node startup is about 40 ms, the keychain read 5–30 ms, decryption under 1 ms. Lazy-load everything not needed for `run`, and ship one bundled ESM file. ⚠️ Measured in Spike S1 on Windows: about 100 ms, mostly the extra Node startup (a bare `node -e 0` took 145 ms on that machine). Whether the budget or the code should change is still open ([06](06-roadmap.md#still-open)).
 
 ## 8. Coexisting with `.env` files, and the leak guard
 
@@ -256,7 +274,7 @@ Confirmed 2026-10-21: **secrets in arca, non-sensitive config in `.env` files** 
 
 - Frameworks (Next.js, the Vite family, Astro, Nuxt, SvelteKit) keep loading their own `.env*` files exactly as before, mode logic included (`.env.development`, `.env.production`, `.local` variants). arca doesn't touch that.
 - All of them let already-set process env win over their files. So a secret injected by arca automatically beats a same-named `.env` entry, with no coordination needed.
-- Some tools never load `.env` themselves (plain `node`, `tsx`, ad-hoc scripts). For those, `arca.json` can opt in with `"envFiles": [".env", ".env.local"]`. arca parses those files (`util.parseEnv`) and injects them **below secrets and the shell env** (rank 3 in the table below). The default is `[]`, so arca never duplicates a framework's own loading. Profiles can add their own config files (`profiles.acceptatie.envFiles: [".env.acceptatie"]`, see [07](07-profiles.md)).
+- Some tools never load `.env` themselves (plain `node`, `tsx`, ad-hoc scripts). For those, `arca.json` can opt in with `"envFiles": [".env", ".env.local"]`. arca parses those files (with the same rules as dotenv and `util.parseEnv`) and injects them **below secrets and the shell env** (rank 3 in the table below). The default is `[]`, so arca never duplicates a framework's own loading. Profiles can add their own config files (`profiles.acceptatie.envFiles: [".env.acceptatie"]`, see [07](07-profiles.md)).
 - ⚠️ **Pitfall:** don't list mode-specific files (`.env.development`) in `envFiles` when a wrapped script also runs builds. Process env beats the framework's files, so dev values would override `.env.production` in `next build`. `arca doctor` warns about this combination.
 
 **Precedence (confirmed)**
@@ -270,21 +288,21 @@ Confirmed 2026-10-21: **secrets in arca, non-sensitive config in `.env` files** 
 
 **Leak guard**
 
-Mixed mode only works if secrets don't drift back into `.env`. On every `run`, `check`, `doctor` and `scan`, arca *reads* (never writes) every `.env*` file at the project root and the nearest package root, plus every file listed in any `envFiles` (top-level or per profile). Then it checks, in order:
+Mixed mode only works if secrets don't drift back into `.env`. On every `run`, `check` and `doctor` (and `scan` in Phase 2), arca *reads* (never writes) every `.env*` file at the project root and the nearest package root, plus every file listed in any `envFiles` (top-level or per profile). Then it checks, in order:
 
 1. **Exact match.** A file value equals, or contains, a value stored in arca under **any profile** (including the variants from §9, such as a URL password). Example: `⚠ STRIPE_SECRET_KEY is stored in arca but also in plaintext in .env.local`.
 2. **Declared sensitive.** A key that `arca.json` declares without `sensitive: false` is set in a `.env*` file.
 3. **Looks like a secret** (undeclared keys only):
-   - Name patterns: `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `PRIVATE`, `API_KEY`, `*_KEY`, `CREDENTIAL`, `DSN`, `AUTH`.
-   - Value patterns: URLs with `user:password@`, known prefixes (`sk_live_`, `sk_test_`, `rk_`, `ghp_`, `github_pat_`, `xox[bp]-`, `AKIA`, `-----BEGIN`, JWT-shaped `eyJ…`), and high entropy (≥ 24 chars, Shannon entropy > 4.0).
-   - Public prefixes (`NEXT_PUBLIC_`, `VITE_`, `PUBLIC_`, `NUXT_PUBLIC_`, `EXPO_PUBLIC_`) are exempt from the *name* heuristics but still exact-matched.
+   - Name patterns: `SECRET`, `TOKEN`, `PASSWORD`, `PASSWD`, `PASSPHRASE`, `PRIVATE`, `API_KEY`/`APIKEY`, `*_KEY`, `KEY`, `CREDENTIAL`, `DSN`, `AUTH`, `SALT`, `SIGNING`, `WEBHOOK`, when the value is plausible (8+ characters, not a number, boolean, URL without credentials or placeholder like `your-…`).
+   - Value patterns: URLs with `user:password@`, known prefixes (`sk_live_`, `sk_test_`, `rk_live_`/`rk_test_`, `whsec_`, `ghp_`/`gho_`/`ghs_`, `github_pat_`, `glpat-`, `xox[abpr]-`, `AKIA`/`ASIA`, `AIza`, `sk-`, `sk-ant-`, `re_`, `SG.`, `npm_`, `-----BEGIN`), JWT-shaped `eyJ…`, and high entropy (≥ 24 chars, no spaces, not an `http(s)` URL, Shannon entropy > 4.0).
+   - Public prefixes (`NEXT_PUBLIC_`, `VITE_`, `PUBLIC_`, `NUXT_PUBLIC_`, `EXPO_PUBLIC_`, `REACT_APP_`, `GATSBY_`, `STORYBOOK_`) are exempt from the *name* heuristics, but value patterns and exact matches still apply.
 4. **Committed?** If a flagged file is tracked by git (`git ls-files`), the warning escalates to "committed to git".
 
 Behaviour:
 
-- On `run`: one compact, non-blocking stderr line (`arca: 2 possible secrets in .env.local, run "arca doctor" for details`). DX first, so the command still starts.
-- `arca doctor` lists each finding (file, key, which rule, never the value) and gives the fix: `arca import .env.local --only STRIPE_SECRET_KEY --delete`.
-- `arca check --strict` and `arca scan --staged` exit non-zero on findings, for CI and pre-commit use.
+- On `run`: one compact, non-blocking stderr line (``arca: 2 possible secrets in .env.local. Run `npx arca doctor` for details.``), skipped with `--quiet`. DX first, so the command still starts.
+- `arca doctor` lists each finding (file, key, which rule, never the value) and gives the fix: `npx arca import .env.local --only STRIPE_SECRET_KEY --delete`.
+- `arca check --strict` exits non-zero on findings, for CI and pre-commit use. `arca scan --staged` does the same in Phase 2.
 - Silencing: declare the var `sensitive: false` in `arca.json`, or add it to `"leakGuard": { "ignore": ["KEY"] }`.
 - Cost: a handful of small files, well under 1 ms.
 
@@ -292,18 +310,20 @@ Agents may read `.env` files: by design they hold nothing sensitive. Values that
 
 ## 9. Redaction engine
 
-- **Always on.** The redactor runs for every `arca run` and every `register` load. Nothing can disable it.
+- **Always on.** The redactor runs for every `arca run` that injects secrets (and every `register` load, in Phase 2). Nothing can disable it. The console guard uses the same redactor inside the child, for the active profile's secrets only: it reads values from the child's own env, and putting other profiles' values there would hand them to the app.
 - **Needles:** every **vault** value of **every profile** of the project (not only the active one) where `sensitive !== false` and `length >= 6`. An acceptatie value that turns up in an ontwikkel run is still masked. Values from `.env` files are not needles. Shorter values (`true`, `3000`, `dev`) would mangle output, so they're skipped. `arca set` and `arca doctor` warn when a *sensitive* value is that short, since it won't be masked.
 - **Variants per value:** raw, `encodeURIComponent`, JSON-string-escaped, base64 and base64url of the full value. If the value parses as a URL with credentials (`postgres://user:pass@host/db`), the password and the `user:pass` pair are added as separate needles, because DB drivers often print one without the other.
-- **Replacement:** `[arca:NAME]`. Partial matches like the URL password become `[arca:NAME#password]`. Matches from a profile other than the active one become `[arca:NAME@acceptatie]`. Unlike a bare `[REDACTED]`, this tells the agent (and you) *which* variable leaked, so debugging still works ("the app logs DATABASE_URL on startup").
+- **Replacement:** `[arca:NAME]`. Partial matches become `[arca:NAME#password]` (the URL password) or `[arca:NAME#credentials]` (the `user:pass` pair). Matches from a profile other than the active one become `[arca:NAME@acceptatie]`. Unlike a bare `[REDACTED]`, this tells the agent (and you) *which* variable leaked, so debugging still works ("the app logs DATABASE_URL on startup").
 - **Streaming correctness:**
   - Decode with `StringDecoder('utf8')`, so multi-byte characters aren't split.
-  - Use a multi-needle matcher (Aho–Corasick, or a simple loop for under 100 needles). After matching a chunk, **hold back only the longest suffix that is a proper prefix of some needle**. Emit everything else immediately, so normal output has no added latency.
+  - Use a multi-needle matcher (built: needles grouped by first character, longest first, deduplicated with full-value replacements winning over partial ones). After matching a chunk, **hold back only the longest suffix that is a proper prefix of some needle**. Emit everything else immediately, so normal output has no added latency.
   - If no new data arrives within 50 ms, flush the held suffix anyway. Waiting forever would stall prompts. The theoretical leak, a process printing a secret prefix and pausing for over 50 ms mid-secret, is negligible.
   - Flush on stream end and child exit.
 - **Known gaps (documented):** ANSI colour codes *inside* a value, transformed values, and output the app writes to files or the browser.
 
 ## 10. In-process loader (`@bremmdev/arca-env/register`), Phase 2
+
+Not built yet. Part of it shipped early as the console guard (§9, [02 L11](02-threat-model.md#leak-channels-and-mitigations)), which masks `console.*` arguments but doesn't load values or patch stdout.
 
 For runners that don't go through package scripts, like IDE test explorers, debuggers and "Run file" buttons:
 
@@ -316,13 +336,13 @@ For runners that don't go through package scripts, like IDE test explorers, debu
 
 | Need | Choice | Why |
 |---|---|---|
-| Runtime | Node ≥ 22 (current LTS lines). Node 20 is EOL. | Built-in `util.parseArgs`, `util.parseEnv`, `fs` promises, stable `--import` |
+| Runtime | Node ≥ 24 (`engines`, build target `node24`, CI on Node 24). Older lines are EOL or close to it. | Built-in `util.parseArgs`, `fs` promises, stable `--import` |
 | Keychain | `@napi-rs/keyring` | Maintained, prebuilt, sync API, keyutils fallback is explicit |
 | Spawn | `cross-spawn` | Industry standard for Windows `.cmd` shims and quoting |
 | PTY (optional, Phase 2) | `node-pty` as an `optionalDependency` | Real TTY for the child while still masking. 🔬 Prebuilt binary availability per platform needs checking (Spike S8). |
 | Prompts | `@clack/prompts` | Nice init/setup UX, masked input |
-| Agent markers | `@vercel/detect-agent` (or vendored `agents.json`) | Shared community rule list |
-| Parse dotenv | `node:util` `parseEnv` | Zero-dependency import |
-| Build/test | TypeScript, `tsdown` (or `tsup`), Vitest | Single bundled ESM bin |
+| Agent markers | Vendored list in `src/context.ts`, based on `@vercel/detect-agent` | Shared community rule list, no extra dependency |
+| Parse dotenv | Own parser in `src/envfiles.ts`, tested against `node:util` `parseEnv` | `import --delete` needs each entry's line numbers, which `parseEnv` doesn't give |
+| Build/test | TypeScript, `tsdown`, Vitest | Bundled ESM: `dist/cli.mjs`, `dist/index.mjs`, `dist/guard.mjs` |
 
 **Why TypeScript and not Rust/Go:** the audience is JS developers, distribution through `npm i -D` gives per-project version pinning with no extra installer, and the hot path is I/O-bound. Native OS integrations (Windows Hello, Touch ID, process tree) can be added later as small prebuilt napi helpers, the same way `@napi-rs/keyring` ships.

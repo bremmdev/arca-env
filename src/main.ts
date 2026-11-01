@@ -9,8 +9,10 @@ import { checkCommand, doctorCommand, listCommand, policyCommand, projectsComman
 import { initCommand } from './commands/init.js'
 import { profilesCommand, useCommand } from './commands/profiles.js'
 import { exportCommand, importCommand, restoreCommand, revealCommand, setCommand, setupCommand, unsetCommand } from './commands/values.js'
+// Bundled at build time, so the CLI never reports a different version than the package.
+import pkg from '../package.json' with { type: 'json' }
 
-export const VERSION = '0.1.0'
+export const VERSION: string = pkg.version
 
 const HELP = `arca: keep secrets out of .env files and out of reach of AI agents
 

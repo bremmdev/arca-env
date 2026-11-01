@@ -128,9 +128,11 @@ When arca refuses, it says what to do instead. Agents follow instructions in err
 ```
 arca: secret values cannot be shown to AI agents (detected: claude-code via CLAUDECODE).
 You don't need the values. Secrets are injected automatically when you run package
-scripts, for example `npm run dev`. Their output is masked as [arca:NAME].
-  • See which variables exist:   arca list
-  • A value is missing or wrong: ask the user to run `arca set NAME`
+scripts, for example `npm run dev` or `npm test`. Their output is masked as [arca:NAME].
+  • See which variables exist:   npx arca list
+  • Check that they are set:     npx arca check
+  • A value is missing or wrong: ask the user to run `npx arca set NAME`
+  • Need a new random secret:    ask the user to run `npx arca set NAME --generate`
 ```
 
 `arca init` can also add a short section to `AGENTS.md` / `CLAUDE.md` that explains these rules to agents up front.
@@ -204,8 +206,8 @@ npm run dev
 ## 9. Where the secrets are kept
 
 - **Encrypted files, one per project and profile**, in your user data folder (`%LOCALAPPDATA%\arca` on Windows), never inside a project. They use AES-256-GCM, a standard authenticated cipher.
-- **One random key in your OS keychain**: Windows Credential Manager, macOS Keychain or the Linux Secret Service. That's why there's no master password to type. On systems without a keychain, like WSL, arca asks for a passphrase instead, about once a day.
-- **The store isn't a backup.** If the keychain is wiped, the secrets are gone. For local development that's usually fine, because the values can be fetched again from their dashboards, and there's a backup command for the rest.
+- **One random key in your OS keychain**: Windows Credential Manager, macOS Keychain or the Linux Secret Service. That's why there's no master password to type. On systems without a keychain, like WSL, arca uses a passphrase instead. For now it asks on every run unless `ARCA_PASSPHRASE` is set. Asking only about once a day is planned.
+- **The store isn't a backup.** If the keychain is wiped, the secrets are gone. For local development that's usually fine, because the values can be fetched again from their dashboards. A backup command for the rest is planned.
 
 ---
 
@@ -243,11 +245,11 @@ In short, it's best-effort defence in depth, not a security boundary. That's the
 
 ## 12. Status and next steps
 
-arca is in **planning**. No code exists yet.
+arca **0.2.0 is published on npm** (Node 24 or newer).
 
-1. **Spikes first**: short experiments to confirm the risky assumptions, like how the keychain behaves on each OS, which variables each agent sets, and how dev servers behave when their output is masked.
-2. **First version**: the encrypted store, `arca run` with masking, agent detection, profiles, the leak guard, and the commands above.
-3. **Later**: a fingerprint or Windows Hello prompt to confirm you're a person, the pseudo-terminal mode, support for IDE test runners and debuggers, and team sharing.
+1. **Built**: the encrypted store, `arca run` with masking (including a console guard for dev tools that send server logs to the browser), agent detection, profiles, the leak guard, and the commands above.
+2. **Still being checked**: markers of agents other than Claude Code, script detection under pnpm, yarn and bun, and how Ctrl+C, colours and prompts behave in a real terminal through the masking pipe.
+3. **Later**: a fingerprint or Windows Hello prompt to confirm you're a person, the pseudo-terminal mode, support for IDE test runners and debuggers, `arca scan` with a pre-commit hook, backups, and team sharing.
 
 ---
 

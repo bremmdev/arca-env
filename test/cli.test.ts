@@ -241,7 +241,8 @@ describe('teammates, CI and edge cases', () => {
   it('nested runs reuse the outer run instead of injecting again', async () => {
     const h = project()
     await h.human(['setup'], { answers: { password: [STRIPE], confirm: [true] } })
-    const { io } = await h.human(['run', '--', 'node', 'print.js'], { env: { ARCA_ACTIVE: 'arc_teammate2222222222' } })
+    // An outer arca run always passes both on to its child.
+    const { io } = await h.human(['run', '--', 'node', 'print.js'], { env: { ARCA_ACTIVE: 'arc_teammate2222222222', ARCA_PROFILE: 'default' } })
     expect(io.out()).toContain('stripe-ok=false') // the outer arca would have injected it
   })
 
@@ -287,3 +288,12 @@ describe('teammates, CI and edge cases', () => {
 })
 
 void mkdirSync
+
+describe('version', () => {
+  it('reports the version in package.json', async () => {
+    const { version } = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as { version: string }
+    const { code, io } = await harness().human(['--version'])
+    expect(code).toBe(0)
+    expect(io.out()).toBe(`${version}\n`)
+  })
+})
