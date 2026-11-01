@@ -148,3 +148,7 @@ arca can't stop deliberate workarounds: an agent that hides its markers, edits `
 ## Status
 
 Profiles (several sets of values per project, switched with `arca use`) are in. A PTY mode for fully interactive tools, an in-process loader for IDE test runners, and `arca scan` are planned.
+
+## License
+
+[MIT](LICENSE). Free to use, copy, modify and distribute, for any purpose.

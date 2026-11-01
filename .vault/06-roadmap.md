@@ -149,8 +149,6 @@ Nothing blocking. All product decisions are recorded as D1–D10 above. Open as 
 - **Overhead budget:** [03 §7](03-architecture.md#7-runner-arca-run) sets under 80 ms. S1 measured about 100 ms on Windows, mostly the extra Node startup. Adjust the budget, or make startup faster?
 - **Policy file deletion:** a deleted `policy.vault` falls back to `scripts`, so a `deny` can be loosened by tampering with the store. Documented in [02](02-threat-model.md#prompt-injection-walkthrough). Leave it as accepted circumvention, or detect it?
 - **Azure Key Vault ([09](09-azure-key-vault-references.md)):** resolve `@Microsoft.KeyVault(...)` references at run time, or `arca pull --from azure` into the store, or neither. Not on the Phase 3 provider list yet.
-- **License:** `package.json` says MIT, but there's no `LICENSE` file (O7).
-
 ## Risks
 
 | Risk | Mitigation |

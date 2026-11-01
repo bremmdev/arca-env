@@ -69,7 +69,7 @@ The `examples/` folder mentioned below (`examples/next`, `examples/tanstack-star
 | O4 | The human prompts (`init`, `set`, `setup`) in a real terminal. Validation simulated them. | ⏳ needs you |
 | O5 | The console guard in a full TanStack Start app (does `--import` in `NODE_OPTIONS` disturb the dev server?) | ✅ dev server checked 2026-10-22 in `examples/tanstack-start` (TanStack Start 1.169, Vite 8, Devtools on): starts normally, browser console gets `[arca:NAME]`. `vite build` not checked yet. |
 | O6 | Lifecycle variables under pnpm, yarn and bun (spike S4), and markers of agents other than Claude Code (spike S3) | ⏳ |
-| O7 | `package.json` says `MIT`, but there's no `LICENSE` file, and the license wasn't your explicit choice | ⏳ |
+| O7 | `package.json` says `MIT`, but there's no `LICENSE` file, and the license wasn't your explicit choice | ✅ 2026-11-01: you chose a license that lets everyone use it freely. MIT kept, `LICENSE` added. |
 | O8 | The tests leave temporary folders in the OS temp directory | ⏳ minor |
 | O9 | `npx arca --version` prints `0.1.0` (hard-coded in `main.ts`), while `package.json` says `0.1.2` | ✅ 2026-11-01, see R2 |
 | O10 | `publish.yml` publishes on **every push to `main`**. Profiles is a new feature, so bump the version (to 0.2.0?) before pushing | ✅ 0.2.0 is published. The workflow skips versions that are already on npm, so a push without a bump simply doesn't publish. |
