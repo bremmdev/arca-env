@@ -215,7 +215,7 @@ npm run dev
 ## 9. Where the secrets are kept
 
 - **Encrypted files, one per project and profile**, in your user data folder (`%LOCALAPPDATA%\arca` on Windows), never inside a project. They use AES-256-GCM, a standard authenticated cipher.
-- **One random key in your OS keychain**: Windows Credential Manager, macOS Keychain or the Linux Secret Service. That's why there's no master password to type. On systems without a keychain, like WSL, arca uses a passphrase instead. For now it asks on every run unless `ARCA_PASSPHRASE` is set. Asking only about once a day is planned.
+- **One random key in your OS keychain**: Windows Credential Manager or the Linux Secret Service (macOS isn't supported yet). That's why there's no master password to type. On systems without a keychain, like WSL, arca uses a passphrase instead. For now it asks on every run unless `ARCA_PASSPHRASE` is set. Asking only about once a day is planned.
 - **The store isn't a backup.** If the keychain is wiped, the secrets are gone. For local development that's usually fine, because the values can be fetched again from their dashboards. A backup command for the rest is planned.
 
 ---

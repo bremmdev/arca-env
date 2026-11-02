@@ -5,6 +5,7 @@ import { isTemplateFile, loadEnvFiles } from '../envfiles.js'
 import { ArcaError } from '../errors.js'
 import { chooseBackend, loadMasterKey } from '../keychain.js'
 import { scanEnvFiles, type Finding } from '../leakguard.js'
+import { unsupportedPlatformMessage } from '../messages.js'
 import { humanGate } from '../policy.js'
 import { MIN_NEEDLE_LENGTH } from '../redact.js'
 import { gitRemote, type ResolvedVar, type Session } from '../session.js'
@@ -218,6 +219,8 @@ export async function doctorCommand(s: Session): Promise<number> {
 
   s.print(p('bold', 'Context'))
   info(`Node ${process.version} on ${s.io.platform}`)
+  const unsupported = unsupportedPlatformMessage(s.io.platform)
+  if (unsupported) warn(unsupported)
   const a = s.ctx.agent
   if (a.detected) info(`You look like an AI agent: ${a.name} via ${a.via}. Values can't be shown or changed from here.`)
   else info('No AI agent detected')

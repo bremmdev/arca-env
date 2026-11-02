@@ -6,7 +6,7 @@ import { DEV_FILES, isTemplateFile, readEnvFile, type EnvFile } from '../envfile
 import { ArcaError } from '../errors.js'
 import { chooseBackend } from '../keychain.js'
 import { isPublicName, secretReason } from '../leakguard.js'
-import { agentsSnippet } from '../messages.js'
+import { agentsSnippet, unsupportedPlatformMessage } from '../messages.js'
 import { humanGate } from '../policy.js'
 import { Session } from '../session.js'
 import { plural } from '../util.js'
@@ -79,6 +79,8 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
     if (r === null) throw new ArcaError('arca: cancelled.')
     return r
   }
+  const unsupported = unsupportedPlatformMessage(io.platform)
+  if (unsupported) s.note(s.err('yellow', `⚠ ${unsupported}`))
 
   // 1. arca.json
   let created = false

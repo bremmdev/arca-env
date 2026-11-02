@@ -12,7 +12,7 @@ arca moves the secrets in your `.env` / `.env.local` into an encrypted store out
 
 ## Quick start
 
-Requires Node 24 or newer.
+Requires Node 24 or newer, on Windows or Linux ([supported platforms](#supported-platforms)).
 
 ```console
 npm i -D @bremmdev/arca-env
@@ -132,12 +132,22 @@ For a detected agent, `arca run` checks that it was started by a `package.json` 
 
 There's no store in CI, on Vercel or in Docker, so `arca run` just runs the command with the platform's variables, after checking that the required ones exist. `start` scripts stay unwrapped, so production images don't need arca.
 
+## Supported platforms
+
+| Platform | Status |
+|---|---|
+| Windows 10 and 11 | Supported. Tested in CI on every push |
+| Linux, including WSL | Supported. Tested in CI on every push, including against a real GNOME Keyring |
+| macOS | Not supported yet. arca may work, but it isn't tested there. `arca init` and `arca doctor` show a warning |
+
+CI runs on x64 with glibc. The keychain binding also ships for arm64 and musl (Alpine), but those aren't tested yet. Node 24 or newer.
+
 ## Where things are kept
 
 | What | Where |
 |---|---|
-| Encrypted vaults | `%LOCALAPPDATA%\arca` (Windows), `~/Library/Application Support/arca` (macOS), `~/.local/share/arca` (Linux). Override with `ARCA_HOME`. |
-| Master key | Windows Credential Manager, macOS Keychain or Linux Secret Service. Where there's no persistent keychain (WSL, headless Linux, or a Secret Service that doesn't respond), arca uses a passphrase instead (`ARCA_KEYCHAIN=passphrase` forces it). |
+| Encrypted vaults | `%LOCALAPPDATA%\arca` (Windows), `~/.local/share/arca` or `$XDG_DATA_HOME/arca` (Linux). Override with `ARCA_HOME`. |
+| Master key | Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWallet). Where there's no persistent keychain (WSL, headless Linux, or a Secret Service that doesn't respond), arca uses a passphrase instead (`ARCA_KEYCHAIN=passphrase` forces it). |
 
 If the keychain entry is lost, the vaults can't be decrypted. For local development secrets that's usually fine, because they can be fetched again from their dashboards.
 

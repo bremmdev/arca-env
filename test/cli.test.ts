@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
-import { harness, tempDir, tempStore, writeJson, type Harness } from './helpers.js'
+import { main } from '../src/main.js'
+import { PASSPHRASE, cleanEnv, fakeIO, harness, tempDir, tempStore, writeJson, type Harness } from './helpers.js'
 
 const DB = 'postgres://app:s3cr3t-pass@localhost:5432/acme'
 const STRIPE = 'sk_test_51HxYzAbCdEf123456'
@@ -295,5 +296,32 @@ describe('version', () => {
     const { code, io } = await harness().human(['--version'])
     expect(code).toBe(0)
     expect(io.out()).toBe(`${version}\n`)
+  })
+})
+
+describe('supported platforms', () => {
+  // Windows and Linux are supported; macOS gets a warning, never a refusal.
+  async function as(platform: NodeJS.Platform, args: string[]) {
+    const h = harness()
+    writeJson(join(h.dir, 'package.json'), { name: 'platform-test', scripts: { dev: 'node app.js' } })
+    const io = fakeIO({ cwd: h.dir, env: cleanEnv({ ARCA_HOME: h.store, ARCA_PASSPHRASE: PASSPHRASE }) })
+    const code = await main(args, { ...io, platform })
+    return { code, all: io.all() }
+  }
+
+  it('doctor and init warn on macOS, and still work', async () => {
+    const doctor = await as('darwin', ['doctor'])
+    expect(doctor.all).toContain("macOS isn't supported yet: arca may work, but it isn't tested there.")
+    expect(doctor.code).toBe((await as('linux', ['doctor'])).code) // a warning, not a problem
+    const init = await as('darwin', ['init', '--yes'])
+    expect(init.code).toBe(0)
+    expect(init.all).toContain("macOS isn't supported yet")
+  })
+
+  it('Windows and Linux get no warning', async () => {
+    for (const platform of ['win32', 'linux'] as const) {
+      expect((await as(platform, ['doctor'])).all).not.toContain("isn't supported yet")
+      expect((await as(platform, ['init', '--yes'])).all).not.toContain("isn't supported yet")
+    }
   })
 })

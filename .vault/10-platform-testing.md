@@ -60,7 +60,7 @@ publish:  needs: test, only on push to main
 | ✅ `test/keychain.test.ts` | Real OS keychain: first `set` picks the OS keychain by itself and creates no passphrase file, each temp `ARCA_HOME` gets its own entry (never your real `master-key/v1`), `doctor` names the keychain, a deleted entry gives "no master key found" and is never silently replaced. Gated by `ARCA_TEST_OS_KEYCHAIN=1`, deletes its entries afterwards. (The "read back from a new process" idea was dropped: pinning to the Secret Service removes the in-memory fallback it was meant to catch.) | Windows CI, `keychain-linux`, your machine on demand |
 | ✅ `test/backend.test.ts` | `chooseBackend`: Windows → os, Linux + D-Bus → os, no D-Bus → passphrase, WSL (`WSL_DISTRO_NAME`) → passphrase, `ARCA_KEYCHAIN` and the store's recorded backend override. On real Linux: with a D-Bus address that can't connect, the first key falls back to a passphrase with a note. | Everywhere; the fallback on Linux, not WSL |
 | ✅ `test/spawn.test.ts` | A local tool package installed by **real npm** (`--offline`), so `node_modules/.bin` holds npm's own shim: `.cmd` through cmd.exe on Windows, a symlink on Linux. Project path with a space. 21 awkward arguments arrive unchanged (spaces, quotes, `& | < > ^ ! ( ) ; , * ?`, `%PATH%`, backslashes, unicode, an empty string). Secret masked, exit codes passed through, missing command → 127. Masking holds when the secret arrives one byte per chunk, when a multi-byte value is split across chunks, and inside a 1 MB line with no newline. | Both OSes (passed on both, 2026-11-02) |
-| `test/signals.test.ts` | Spawn the **built CLI** as a real process running a child that sleeps. Linux: SIGTERM/SIGINT/SIGHUP reach the child, exit code 143/130, no orphan left. Windows: kill the tree with `taskkill /T` and check no orphan; Ctrl+C can't be simulated reliably in CI, so it goes on the manual checklist. | Both OSes, different assertions |
+| ✅ `test/signals.test.ts` | Builds the CLI with the tsdown API into `node_modules/.cache` (≈ 150 ms, `dist/` untouched) and runs it as a real process, masked, with stdin a pipe. Linux, for SIGTERM, SIGHUP and SIGINT: a child that handles the signal gets it, arca exits with the child's code and its last output still comes through masked; a child that doesn't is stopped and arca exits 128 + signal (143, 129, 130); no child is left behind. Windows: killing **only** arca ends the child too (libuv puts children in a kill-on-close job object), and `taskkill /T /F` ends both. Ctrl+C in a real terminal stays manual (M1, M6). | Both OSes, different assertions (passed on both, 2026-11-02) |
 | ✅ `test/files.test.ts` | Store location: `%LOCALAPPDATA%` not roaming, the home-folder fallback, `XDG_DATA_HOME`, `ARCA_HOME`. Linux: after `set` ×2, `restore`, `profiles add`, `use` and `policy set`, the store folder is `0700` and every file under it is private; `export --output` makes new **and existing** files `0600` (P6). Windows: a file held open without delete sharing (like antivirus) for 300 ms is still written; held for 5 s, the write fails cleanly (P5). | Per OS with `it.runIf` (passed on both, 2026-11-02) |
 
 Rule for platform-specific tests: use `it.runIf(process.platform === 'linux')` etc., never silently skip. A test that can't run on an OS should say so in its name.
@@ -112,12 +112,12 @@ Setup notes:
 
 | # | Where | Check |
 |---|---|---|
-| M1 | Windows Terminal + PowerShell | `npm run dev` in a real Next.js example; Ctrl+C stops it **once**, no "Terminate batch job (Y/N)?" loop, no orphan `node.exe` in Task Manager |
+| M1 | Windows Terminal + PowerShell | `npm run dev` in a real Next.js example; Ctrl+C stops it **once**, no "Terminate batch job (Y/N)?" loop, no orphan `node.exe` in Task Manager. (Killing arca and process-tree kills are automated now; only the console Ctrl+C is left.) |
 | M2 | cmd.exe and Git Bash | `npx arca`, `npx arca set` (masked prompt works), `npm run dev` |
 | M3 | Windows, VS Code integrated terminal + Claude Code | Agent runs `npm run dev` (allowed, masked), `npx arca reveal` (refused) |
 | M4 | WSL, fresh store | First `npx arca set` asks for a passphrase twice; later commands ask once; `ARCA_PASSPHRASE` skips it |
 | M5 | WSL with gnome-keyring, `ARCA_KEYCHAIN=os` | Key survives `wsl --shutdown` |
-| M6 | WSL | Ctrl+C on `npm run dev`; `kill -TERM` the arca process from another shell |
+| M6 | WSL | Ctrl+C on `npm run dev` in a real terminal. (`kill -TERM`/`-HUP`/`-INT` on the arca process is automated now.) |
 
 Record anything found in [08](08-issue-log.md), as usual.
 
@@ -134,8 +134,8 @@ Record anything found in [08](08-issue-log.md), as usual.
 2. ✅ Smoke test (layer 3) added to CI (2026-11-02).
 3. ✅ `backend.test.ts` + `keychain.test.ts` + the `keychain-linux` CI job (2026-11-02). The read-back doubt was real: see P3 in [08](08-issue-log.md).
 4. ✅ `spawn.test.ts` and `files.test.ts` (2026-11-02). Found and fixed P5 (Windows rename retry too short) and P6 (`export --output` kept an existing file world-readable).
-5. `signals.test.ts`.
+5. ✅ `signals.test.ts` (2026-11-02). No bugs found; one surprise recorded (P7).
 6. WSL setup and the first pass of the manual checklist.
-7. README/doctor wording for macOS.
+7. ✅ README/doctor wording for macOS (2026-11-02): a "Supported platforms" section in the README; `arca init` and `arca doctor` warn on macOS without failing (tested); D11 in [06](06-roadmap.md).
 8. Later: arm64 and Alpine jobs, pnpm smoke test.
 9. Todo: framework coverage job (layer 5), daily and on version bumps.

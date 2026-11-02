@@ -81,3 +81,10 @@ Secrets are stored outside the repo with arca and injected when commands run.
   the arca store or the OS keychain. If arca blocks you, ask the user.
 `
 }
+
+/** Windows and Linux are supported. Anything else gets a warning, never a refusal. */
+export function unsupportedPlatformMessage(platform: NodeJS.Platform): string | null {
+  if (platform === 'win32' || platform === 'linux') return null
+  const name = platform === 'darwin' ? 'macOS' : platform
+  return `arca supports Windows and Linux. ${name} isn't supported yet: arca may work, but it isn't tested there.`
+}
