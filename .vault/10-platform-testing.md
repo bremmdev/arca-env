@@ -27,7 +27,7 @@
 
 ## The plan
 
-Four layers, cheapest first. Each layer runs on both OSes.
+Four layers, cheapest first, plus framework coverage as a todo (layer 5). Each layer runs on both OSes.
 
 ### Layer 1: CI on every push and PR (`.github/workflows/publish.yml`) ✅ built 2026-11-02
 
@@ -36,7 +36,7 @@ One workflow, two jobs. The filename stays `publish.yml` because npm trusted pub
 ```
 on: [push, pull_request]
 test:     matrix os [ubuntu-latest, windows-latest] × node [24, current]
-          npm ci → typecheck → test → build   (+ smoke, layer 3, once it exists)
+          npm ci → typecheck → test → build → smoke (layer 3)
 publish:  needs: test, only on push to main
           version already on npm? skip : build → npm publish
 ```
@@ -65,19 +65,33 @@ publish:  needs: test, only on push to main
 
 Rule for platform-specific tests: use `it.runIf(process.platform === 'linux')` etc., never silently skip. A test that can't run on an OS should say so in its name.
 
-### Layer 3: packed-package smoke test (`scripts/smoke.mjs`)
+### Layer 3: packed-package smoke test (`scripts/smoke.mjs`) ✅ built 2026-11-02
 
-Runs in CI after `build`, on both OSes. It tests what users actually install, not the source:
+`npm run build && npm run smoke`. Runs in CI after `build`, on every OS/Node job. It tests what users actually install, not the source. The project is deliberately tiny (no framework): one `package.json` with `"dev": "arca run -- node app.js"`, an `arca.json` declaring `API_KEY`, and `app.js`. Steps:
 
-1. `npm pack` → tarball.
-2. New temp project (path with a space in it), `npm i -D <tarball>`.
-3. `npx arca --version` matches `package.json`.
-4. Passphrase store via `ARCA_HOME` + `ARCA_PASSPHRASE`; `npx arca set` a value from stdin.
-5. A `package.json` script `"dev": "arca run -- node app.js"` where `app.js` prints the secret with `console.log` and `process.stdout.write`; `npm run dev` output contains `[arca:NAME]` and not the value. That covers the bin shim, `npm run`, the guard preload from inside `node_modules`, and masking.
-6. Same run with `CLAUDECODE=1`: script allowed, ad-hoc `npx arca run -- node -e …` refused.
-7. `npx arca doctor` exits 0 and names the right key storage.
+1. `npm pack`, and check `dist/cli.mjs`, `dist/index.mjs`, `dist/guard.mjs` and `schema.json` are in it.
+2. Install the tarball into a temp project whose path has a space in it.
+3. `npx arca --version` matches `package.json` (bin shim, `.cmd` on Windows).
+4. Store `API_KEY` in a throwaway passphrase store (`ARCA_HOME`, `ARCA_PASSPHRASE`), never the real store or keychain. This goes through the installed package's programmatic `main()` with a terminal-like IO, because the CLI's human gate rightly refuses `set` without a real terminal. It also checks the package's `exports`.
+5. `npm run dev`: the secret is injected (`secret-ok=true`) and `console.log`, `process.stdout.write` and `console.error` all show `[arca:API_KEY]`, never the value.
+6. `app.js` replaces `console.log` with a wrapper that saves its arguments to a file (like TanStack's console piping). The file must hold the masked value, which proves the console guard was preloaded from inside `node_modules`.
+7. With `CLAUDECODE=1`: `npm run dev` is allowed and masked; `npx arca run -- node app.js` is refused.
+8. `npx arca doctor` names the passphrase key storage and never the value.
+9. CI without a store (`CI=true`, empty `ARCA_HOME`): `npm run dev` fails naming `API_KEY`, and passes through when the platform provides it.
 
-Optional later: repeat steps 2–5 with `pnpm` (symlinked `node_modules`, different shims). Worth it before 1.0, not for the MVP.
+The script strips agent markers and `npm_*`/`ARCA_*` vars it inherited, so it gives the same result when run from Claude Code. `ARCA_SMOKE_KEEP=1` keeps the temp folder for inspection.
+
+Optional later: repeat steps 2–7 with `pnpm` (symlinked `node_modules`, different shims). Worth it before 1.0, not for the MVP.
+
+### Layer 5 (todo): framework coverage
+
+The smoke test has no framework on purpose: framework installs are slow and a broken framework release shouldn't fail an arca push. Framework-specific behaviour is still worth covering in CI, as a **separate job that runs daily (`schedule`) and on version bumps**, never blocking a normal push:
+
+- Next.js: `next dev` through `arca run`; server `console.log` masked in the terminal, in `.next/dev/logs/next-development.log` and in React's browser log replay (issues U3, U4 in [08](08-issue-log.md)).
+- TanStack Start or Vite: devtools console piping to the browser is masked (U2).
+- Both OSes. The browser checks need headless Chrome (Playwright), which is the slow part.
+
+The `examples/` folders on your machine are the starting point, but they're gitignored, so the job needs small committed fixtures or scaffolds them with `create-next-app` / `create-vite` at a pinned version.
 
 ### Layer 4: local and manual testing on your machine
 
@@ -117,10 +131,11 @@ Record anything found in [08](08-issue-log.md), as usual.
 ## Order of work
 
 1. ✅ CI with the Windows + Linux matrix running the existing tests, publish gated on it (2026-11-02).
-2. Smoke test (layer 3) added to CI.
+2. ✅ Smoke test (layer 3) added to CI (2026-11-02).
 3. `backend.test.ts` + `keychain.test.ts` + the Secret Service CI job. Fix the read-back check in `writeOsKey` depending on what the test shows.
 4. `spawn.test.ts` and the permission tests.
 5. `signals.test.ts`.
 6. WSL setup and the first pass of the manual checklist.
 7. README/doctor wording for macOS.
 8. Later: arm64 and Alpine jobs, pnpm smoke test.
+9. Todo: framework coverage job (layer 5), daily and on version bumps.

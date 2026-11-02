@@ -36,6 +36,8 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
+      - name: Smoke test (packed package in a temp project)
+        run: npm run smoke
 
   # A version bump on main is the release gate. Runs only when every test job passed.
   publish:
