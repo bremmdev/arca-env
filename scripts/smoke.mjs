@@ -46,7 +46,7 @@ function npm(args, env, cwd = project) {
     ? spawnSync(process.execPath, [npmCli, ...args], { cwd, env, encoding: 'utf8' })
     : spawnSync('npm', args, { cwd, env, encoding: 'utf8', shell: true })
   if (r.error) throw r.error
-  return { code: r.status, out: r.stdout + r.stderr }
+  return { code: r.status, stdout: r.stdout, out: r.stdout + r.stderr }
 }
 
 /** A developer's terminal: no agent markers, no npm/arca vars from whoever started this script. */
@@ -86,7 +86,11 @@ try {
   await step('npm pack', () => {
     const r = npm(['pack', '--json', '--pack-destination', root], process.env, repo)
     check(r.code === 0, 'npm pack failed', r.out)
-    const [info] = JSON.parse(r.out.slice(r.out.indexOf('[')))
+    // Newer npm versions print `npm notice` lines too, so cut the JSON array out of stdout.
+    // It's pretty-printed: the top-level array opens and closes at the start of a line.
+    const json = r.stdout.match(/^\[[\s\S]*?^\]$/m)
+    check(json, 'no JSON in the npm pack output', r.out)
+    const [info] = JSON.parse(json[0])
     const files = info.files.map((f) => f.path)
     for (const f of ['dist/cli.mjs', 'dist/index.mjs', 'dist/guard.mjs', 'schema.json']) {
       check(files.includes(f), `${f} is missing from the package. Run \`npm run build\` first.`)
