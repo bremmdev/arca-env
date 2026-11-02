@@ -19,7 +19,7 @@
 ## Gaps that worry me most
 
 1. **No tests on normal pushes** (fixed 2026-11-02 by layer 1). A broken commit only showed up when you bumped the version, and then the failing run blocked the publish.
-2. **The Linux keychain path has never run.** Two specific doubts:
+2. **The Linux keychain path has never run** (fixed 2026-11-02, P3 in [08](08-issue-log.md)). Two specific doubts, both confirmed in Docker:
    - `writeOsKey` reads the key back to catch "keyutils accepts writes that don't persist". A read-back **in the same process** will succeed with keyutils too, so that check probably doesn't do what its comment says. Needs a real test: write, then read from a *new process* after the keyring daemon restarts.
    - D-Bus present but no Secret Service daemon (minimal desktops, tiling WMs, some containers): we choose `os` and then fail. The error tells the user to set `ARCA_KEYCHAIN=passphrase`. Check the message is actually what they see, and consider falling back automatically on the *first* key creation.
 3. **Windows `.cmd` shims.** `next`, `vite` and `npm` are `.cmd` files in `node_modules/.bin`. `cross-spawn` handles them, but no test proves it, including arguments with spaces, quotes, `&` and `%`.
@@ -49,16 +49,16 @@ publish:  needs: test, only on push to main
 - Extra Linux jobs, each small:
   - **`ubuntu-24.04-arm`**: arm64 binding (`linux-arm64-gnu`).
   - **Alpine container** (`node:24-alpine`): musl binding, BusyBox userland. Passphrase mode only.
-  - **Secret Service job**: `ubuntu-latest` with `gnome-keyring` + `dbus-x11` installed, tests run under `dbus-run-session` with an unlocked keyring (`echo pw | gnome-keyring-daemon --unlock --components=secrets`). This is where the real-keychain tests (layer 2) run on Linux.
-- Windows: the real-keychain tests run on `windows-latest` directly (runners have Credential Manager).
+  - ✅ **`keychain-linux`**: `ubuntu-latest` with `dbus` + `gnome-keyring`, tests run under `dbus-run-session` with an unlocked keyring (`echo pw | gnome-keyring-daemon --unlock --components=secrets`). Runs `keychain.test.ts` against the real Secret Service and `backend.test.ts` (auto-detection). Publish needs it too.
+- ✅ Windows: the real-keychain tests run in the `windows-latest` test jobs (`ARCA_TEST_OS_KEYCHAIN=1` on the Test step).
 - Skip `windows-11-arm` for now; add it if someone asks.
 
 ### Layer 2: new tests in the suite
 
 | Test file | What it covers | Runs where |
 |---|---|---|
-| `test/keychain.test.ts` | Real OS keychain: create key on first `set`, read it back **from a new process**, `deleteOsKey`, the "vaults exist but key missing" error, a custom `ARCA_HOME` gets its own account (`keychainAccount` hash) so tests never touch your real key. Gated by `ARCA_TEST_OS_KEYCHAIN=1`, always cleans up. | Windows CI, Linux Secret Service job, your machine on demand |
-| `test/backend.test.ts` | `chooseBackend` with injected `/proc/version` and env: WSL → passphrase, no D-Bus → passphrase, D-Bus → os, config and `ARCA_KEYCHAIN` override both. Needs `readSafe` made injectable (via `IO`), a small change. | Everywhere (pure) |
+| ✅ `test/keychain.test.ts` | Real OS keychain: first `set` picks the OS keychain by itself and creates no passphrase file, each temp `ARCA_HOME` gets its own entry (never your real `master-key/v1`), `doctor` names the keychain, a deleted entry gives "no master key found" and is never silently replaced. Gated by `ARCA_TEST_OS_KEYCHAIN=1`, deletes its entries afterwards. (The "read back from a new process" idea was dropped: pinning to the Secret Service removes the in-memory fallback it was meant to catch.) | Windows CI, `keychain-linux`, your machine on demand |
+| ✅ `test/backend.test.ts` | `chooseBackend`: Windows → os, Linux + D-Bus → os, no D-Bus → passphrase, WSL (`WSL_DISTRO_NAME`) → passphrase, `ARCA_KEYCHAIN` and the store's recorded backend override. On real Linux: with a D-Bus address that can't connect, the first key falls back to a passphrase with a note. | Everywhere; the fallback on Linux, not WSL |
 | `test/spawn.test.ts` | Child processes the way real projects run them: a `.cmd`/shell shim in a fake `node_modules/.bin`, args with spaces/quotes/`&`/`%`/unicode, paths with spaces, exit codes passed through, `command not found` → 127, masking when output arrives in tiny chunks or as one huge line. | Both OSes |
 | `test/signals.test.ts` | Spawn the **built CLI** as a real process running a child that sleeps. Linux: SIGTERM/SIGINT/SIGHUP reach the child, exit code 143/130, no orphan left. Windows: kill the tree with `taskkill /T` and check no orphan; Ctrl+C can't be simulated reliably in CI, so it goes on the manual checklist. | Both OSes, different assertions |
 | additions to `units.test.ts` | Linux: store dir is `0o700`, vault and key files `0o600` after every write path (`set`, `import`, `restore`, `.bak`). Windows: store lands in `%LOCALAPPDATA%`, not roaming. XDG_DATA_HOME honoured. The `atomicWrite` EPERM retry with a file held open (Windows only). | Per OS with `it.runIf` |
@@ -132,7 +132,7 @@ Record anything found in [08](08-issue-log.md), as usual.
 
 1. ✅ CI with the Windows + Linux matrix running the existing tests, publish gated on it (2026-11-02).
 2. ✅ Smoke test (layer 3) added to CI (2026-11-02).
-3. `backend.test.ts` + `keychain.test.ts` + the Secret Service CI job. Fix the read-back check in `writeOsKey` depending on what the test shows.
+3. ✅ `backend.test.ts` + `keychain.test.ts` + the `keychain-linux` CI job (2026-11-02). The read-back doubt was real: see P3 in [08](08-issue-log.md).
 4. `spawn.test.ts` and the permission tests.
 5. `signals.test.ts`.
 6. WSL setup and the first pass of the manual checklist.

@@ -34,14 +34,37 @@ jobs:
         run: npm run typecheck
       - name: Test
         run: npm test
+        env:
+          # Windows runners have Credential Manager; Linux gets its own keychain job below.
+          ARCA_TEST_OS_KEYCHAIN: ${{ runner.os == 'Windows' && '1' || '' }}
       - name: Build
         run: npm run build
       - name: Smoke test (packed package in a temp project)
         run: npm run smoke
 
+  # The real Secret Service: a D-Bus session with an unlocked gnome-keyring.
+  keychain-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false # no caching in release builds (cache poisoning)
+      - name: Install dependencies
+        run: npm ci
+      - name: Install gnome-keyring
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq dbus gnome-keyring
+      - name: Keychain tests against the Secret Service
+        run: |
+          dbus-run-session -- sh -c '
+            echo -n ci-keyring-pw | gnome-keyring-daemon --unlock --components=secrets >/dev/null
+            ARCA_TEST_OS_KEYCHAIN=1 npx vitest run test/keychain.test.ts test/backend.test.ts
+          '
+
   # A version bump on main is the release gate. Runs only when every test job passed.
   publish:
-    needs: test
+    needs: [test, keychain-linux]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

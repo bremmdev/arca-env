@@ -137,7 +137,7 @@ There's no store in CI, on Vercel or in Docker, so `arca run` just runs the comm
 | What | Where |
 |---|---|
 | Encrypted vaults | `%LOCALAPPDATA%\arca` (Windows), `~/Library/Application Support/arca` (macOS), `~/.local/share/arca` (Linux). Override with `ARCA_HOME`. |
-| Master key | Windows Credential Manager, macOS Keychain or Linux Secret Service. Where there's no persistent keychain (WSL, headless Linux), arca uses a passphrase (`ARCA_KEYCHAIN=passphrase`). |
+| Master key | Windows Credential Manager, macOS Keychain or Linux Secret Service. Where there's no persistent keychain (WSL, headless Linux, or a Secret Service that doesn't respond), arca uses a passphrase instead (`ARCA_KEYCHAIN=passphrase` forces it). |
 
 If the keychain entry is lost, the vaults can't be decrypted. For local development secrets that's usually fine, because they can be fetched again from their dashboards.
 

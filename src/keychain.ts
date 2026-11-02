@@ -8,8 +8,8 @@ import { atomicWrite, ensureDir, type Store } from './store.js'
 import { storeRoot } from './paths.js'
 
 // One random master key per user, kept in the OS keychain (Windows Credential Manager,
-// macOS Keychain, Linux Secret Service). Where no persistent keychain exists (WSL,
-// headless Linux), it's wrapped with a passphrase instead.
+// Linux Secret Service). Where no persistent keychain exists (WSL, headless Linux),
+// it's wrapped with a passphrase instead.
 
 const SERVICE = 'arca'
 
@@ -23,12 +23,17 @@ export function keychainAccount(store: Store, io: IO): string {
   return `master-key/v1/${hash}`
 }
 
-export function chooseBackend(store: Store, io: IO): Backend {
+/** The backend this store was created with, or the one ARCA_KEYCHAIN asks for. */
+function configuredBackend(store: Store, io: IO): Backend | undefined {
   const configured = store.readGlobalConfig().keychain ?? io.env.ARCA_KEYCHAIN
-  if (configured === 'os' || configured === 'passphrase') return configured
+  return configured === 'os' || configured === 'passphrase' ? configured : undefined
+}
+
+export function chooseBackend(store: Store, io: IO): Backend {
+  const configured = configuredBackend(store, io)
+  if (configured) return configured
   if (io.platform === 'linux') {
-    // keyutils (the Linux fallback) is in-memory: a reboot would destroy the only copy of the key.
-    const wsl = readSafe('/proc/version').toLowerCase().includes('microsoft')
+    const wsl = Boolean(io.env.WSL_DISTRO_NAME) || readSafe('/proc/version').toLowerCase().includes('microsoft')
     if (wsl || !io.env.DBUS_SESSION_BUS_ADDRESS) return 'passphrase'
   }
   return 'os'
@@ -61,7 +66,19 @@ export interface MasterKeyOptions {
 
 export async function loadMasterKey(store: Store, io: IO, opts: MasterKeyOptions): Promise<Buffer | null> {
   const backend = chooseBackend(store, io)
-  const key = backend === 'os' ? await readOsKey(store, io) : await readPassphraseKey(store, io)
+  // On Linux before the first key, 'os' is a guess from D-Bus being there. If the Secret
+  // Service doesn't actually work, the store gets a passphrase instead of an error.
+  const guessed = backend === 'os' && io.platform === 'linux' && configuredBackend(store, io) === undefined
+  let key: Buffer | null
+  if (backend === 'passphrase') key = await readPassphraseKey(store, io)
+  else {
+    try {
+      key = await readOsKey(store, io)
+    } catch (e) {
+      if (!guessed) throw e
+      key = null
+    }
+  }
   if (key) return key
   if (!opts.create) return null
   if (store.hasAnyVault()) {
@@ -71,6 +88,17 @@ export async function loadMasterKey(store: Store, io: IO, opts: MasterKeyOptions
         'Without the key they cannot be decrypted. Restore the keychain entry, or delete that folder to start over.',
     )
   }
+  if (!guessed) return createMasterKey(store, io, backend)
+  try {
+    return await createMasterKey(store, io, 'os')
+  } catch (e) {
+    const reason = (e as Error).message.replace(/^arca: /, '').split('\n')[0]
+    io.stderr.write(`arca: no working Secret Service keyring (${reason}). Using a passphrase instead.\n`)
+    return createMasterKey(store, io, 'passphrase')
+  }
+}
+
+async function createMasterKey(store: Store, io: IO, backend: Backend): Promise<Buffer> {
   const fresh = newMasterKey()
   if (backend === 'os') await writeOsKey(store, io, fresh)
   else await writePassphraseKey(store, io, fresh)
@@ -90,12 +118,19 @@ export async function requireMasterKey(store: Store, io: IO): Promise<Buffer> {
   return key
 }
 
-async function readOsKey(store: Store, io: IO): Promise<Buffer | null> {
+async function osKeyEntry(store: Store, io: IO) {
   const Entry = await osEntry()
+  // Pinned to the Secret Service on Linux. Unpinned, the binding silently falls back to the
+  // kernel keyring, which is in memory: a reboot would destroy the only copy of the key.
+  return new Entry(SERVICE, keychainAccount(store, io), io.platform === 'linux' ? { linux: { store: 'secret-service' } } : undefined)
+}
+
+async function readOsKey(store: Store, io: IO): Promise<Buffer | null> {
   let value: string | null
   try {
-    value = new Entry(SERVICE, keychainAccount(store, io)).getPassword()
+    value = (await osKeyEntry(store, io)).getPassword()
   } catch (e) {
+    if (e instanceof ArcaError) throw e
     throw new ArcaError(
       `arca: could not read the OS keychain (${(e as Error).message}).\n` +
         'If this machine has no keychain, use passphrase mode: set ARCA_KEYCHAIN=passphrase.',
@@ -108,18 +143,26 @@ async function readOsKey(store: Store, io: IO): Promise<Buffer | null> {
 }
 
 async function writeOsKey(store: Store, io: IO, key: Buffer): Promise<void> {
-  const Entry = await osEntry()
-  const entry = new Entry(SERVICE, keychainAccount(store, io))
-  entry.setPassword(key.toString('base64'))
-  // Read it back: some backends (Linux keyutils) accept writes that don't persist.
-  if (entry.getPassword() !== key.toString('base64')) {
+  let kept: string | null
+  try {
+    const entry = await osKeyEntry(store, io)
+    entry.setPassword(key.toString('base64'))
+    // Read it back before any vault depends on it.
+    kept = entry.getPassword()
+  } catch (e) {
+    if (e instanceof ArcaError) throw e
+    throw new ArcaError(
+      `arca: could not write to the OS keychain (${(e as Error).message}).\n` +
+        'If this machine has no keychain, use passphrase mode: set ARCA_KEYCHAIN=passphrase.',
+    )
+  }
+  if (kept !== key.toString('base64')) {
     throw new ArcaError('arca: the OS keychain did not keep the master key. Use passphrase mode: set ARCA_KEYCHAIN=passphrase.')
   }
 }
 
 export async function deleteOsKey(store: Store, io: IO): Promise<boolean> {
-  const Entry = await osEntry()
-  return new Entry(SERVICE, keychainAccount(store, io)).deletePassword()
+  return (await osKeyEntry(store, io)).deletePassword()
 }
 
 function wrappedFile(store: Store): string {
