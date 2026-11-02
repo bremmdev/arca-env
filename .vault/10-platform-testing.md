@@ -59,9 +59,9 @@ publish:  needs: test, only on push to main
 |---|---|---|
 | ✅ `test/keychain.test.ts` | Real OS keychain: first `set` picks the OS keychain by itself and creates no passphrase file, each temp `ARCA_HOME` gets its own entry (never your real `master-key/v1`), `doctor` names the keychain, a deleted entry gives "no master key found" and is never silently replaced. Gated by `ARCA_TEST_OS_KEYCHAIN=1`, deletes its entries afterwards. (The "read back from a new process" idea was dropped: pinning to the Secret Service removes the in-memory fallback it was meant to catch.) | Windows CI, `keychain-linux`, your machine on demand |
 | ✅ `test/backend.test.ts` | `chooseBackend`: Windows → os, Linux + D-Bus → os, no D-Bus → passphrase, WSL (`WSL_DISTRO_NAME`) → passphrase, `ARCA_KEYCHAIN` and the store's recorded backend override. On real Linux: with a D-Bus address that can't connect, the first key falls back to a passphrase with a note. | Everywhere; the fallback on Linux, not WSL |
-| `test/spawn.test.ts` | Child processes the way real projects run them: a `.cmd`/shell shim in a fake `node_modules/.bin`, args with spaces/quotes/`&`/`%`/unicode, paths with spaces, exit codes passed through, `command not found` → 127, masking when output arrives in tiny chunks or as one huge line. | Both OSes |
+| ✅ `test/spawn.test.ts` | A local tool package installed by **real npm** (`--offline`), so `node_modules/.bin` holds npm's own shim: `.cmd` through cmd.exe on Windows, a symlink on Linux. Project path with a space. 21 awkward arguments arrive unchanged (spaces, quotes, `& | < > ^ ! ( ) ; , * ?`, `%PATH%`, backslashes, unicode, an empty string). Secret masked, exit codes passed through, missing command → 127. Masking holds when the secret arrives one byte per chunk, when a multi-byte value is split across chunks, and inside a 1 MB line with no newline. | Both OSes (passed on both, 2026-11-02) |
 | `test/signals.test.ts` | Spawn the **built CLI** as a real process running a child that sleeps. Linux: SIGTERM/SIGINT/SIGHUP reach the child, exit code 143/130, no orphan left. Windows: kill the tree with `taskkill /T` and check no orphan; Ctrl+C can't be simulated reliably in CI, so it goes on the manual checklist. | Both OSes, different assertions |
-| additions to `units.test.ts` | Linux: store dir is `0o700`, vault and key files `0o600` after every write path (`set`, `import`, `restore`, `.bak`). Windows: store lands in `%LOCALAPPDATA%`, not roaming. XDG_DATA_HOME honoured. The `atomicWrite` EPERM retry with a file held open (Windows only). | Per OS with `it.runIf` |
+| ✅ `test/files.test.ts` | Store location: `%LOCALAPPDATA%` not roaming, the home-folder fallback, `XDG_DATA_HOME`, `ARCA_HOME`. Linux: after `set` ×2, `restore`, `profiles add`, `use` and `policy set`, the store folder is `0700` and every file under it is private; `export --output` makes new **and existing** files `0600` (P6). Windows: a file held open without delete sharing (like antivirus) for 300 ms is still written; held for 5 s, the write fails cleanly (P5). | Per OS with `it.runIf` (passed on both, 2026-11-02) |
 
 Rule for platform-specific tests: use `it.runIf(process.platform === 'linux')` etc., never silently skip. A test that can't run on an OS should say so in its name.
 
@@ -133,7 +133,7 @@ Record anything found in [08](08-issue-log.md), as usual.
 1. ✅ CI with the Windows + Linux matrix running the existing tests, publish gated on it (2026-11-02).
 2. ✅ Smoke test (layer 3) added to CI (2026-11-02).
 3. ✅ `backend.test.ts` + `keychain.test.ts` + the `keychain-linux` CI job (2026-11-02). The read-back doubt was real: see P3 in [08](08-issue-log.md).
-4. `spawn.test.ts` and the permission tests.
+4. ✅ `spawn.test.ts` and `files.test.ts` (2026-11-02). Found and fixed P5 (Windows rename retry too short) and P6 (`export --output` kept an existing file world-readable).
 5. `signals.test.ts`.
 6. WSL setup and the first pass of the manual checklist.
 7. README/doctor wording for macOS.

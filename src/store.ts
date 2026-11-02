@@ -319,18 +319,20 @@ export function atomicWrite(file: string, content: string): void {
   } finally {
     closeSync(fd)
   }
-  // On Windows a rename can briefly fail while antivirus or an indexer holds the file.
-  for (let attempt = 0; ; attempt++) {
+  // On Windows a rename can fail while antivirus or an indexer holds the file, sometimes
+  // for a few hundred milliseconds. Retry with growing waits, for up to about 2 seconds.
+  const deadline = Date.now() + 2000
+  for (let wait = 10; ; wait = Math.min(wait * 2, 200)) {
     try {
       renameSync(tmp, file)
       break
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code
-      if (attempt >= 10 || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) {
+      if (Date.now() >= deadline || (code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES')) {
         rmSync(tmp, { force: true })
         throw e
       }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20)
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait)
     }
   }
   if (process.platform !== 'win32') chmodSync(file, 0o600)

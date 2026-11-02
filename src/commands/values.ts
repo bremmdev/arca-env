@@ -1,4 +1,4 @@
-import { existsSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { VAR_NAME, declareVars, isSensitive, type VarDecl } from '../config.js'
 import { generateSecret } from '../crypto.js'
@@ -181,6 +181,8 @@ export async function exportCommand(s: Session, opts: { format?: string; output?
   if (opts.output) {
     const file = resolve(s.io.cwd, opts.output)
     writeFileSync(file, text + '\n', { mode: 0o600 })
+    // `mode` only applies to a new file. An existing one keeps its permissions unless changed.
+    if (process.platform !== 'win32') chmodSync(file, 0o600)
     s.note(`${s.err('green', '✔')} Wrote ${plural(entries.length, 'secret')} to ${opts.output}`)
     s.note(s.err('yellow', `⚠ That file holds plaintext secrets. Delete it when you're done. The leak guard will flag it while it sits in ${project.config.name}.`))
   } else {
