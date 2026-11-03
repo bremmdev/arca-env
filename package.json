@@ -48,8 +48,8 @@
   "devDependencies": {
     "@types/cross-spawn": "^6.0.6",
     "@types/node": "^26.6.5",
-    "tsdown": "^0.22.2",
-    "typescript": "^6.0.3",
+    "tsdown": "^0.23.4",
+    "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   }
 }
