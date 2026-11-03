@@ -37,7 +37,38 @@ Your `.env` files are left untouched. Once you've checked everything works, remo
 npx arca import --delete     # removes only the imported entries; config lines stay
 ```
 
-A teammate who clones the repo runs `npm run dev`, gets told which variables are missing, and runs `npx arca setup`.
+A teammate who clones the repo runs `npm run dev`, gets told which variables are missing, and runs `npx arca setup`. Step by step: [moving an existing project](#moving-an-existing-project-to-arca).
+
+## Moving an existing project to arca
+
+The usual starting point: a `.env.local` (or `.env`) that mixes secrets (`DATABASE_URL`, `STRIPE_SECRET_KEY`) with config (`PORT`, `NEXT_PUBLIC_*`), and scripts like `"dev": "next dev"`.
+
+1. **Install and run `init`** in the project folder:
+
+   ```console
+   npm i -D @bremmdev/arca-env
+   npx arca init
+   ```
+
+   It asks for the project name, then which variables are secrets. The ones that look like secrets are preselected; public names such as `NEXT_PUBLIC_*` aren't. Secrets move into arca, everything else stays in your `.env` files as config, and both are declared in `arca.json` (names only). Each `.env.<name>` file, such as `.env.acceptatie`, is offered as a [profile](#profiles). Then it asks which scripts to wrap with `arca run`. `start` stays unwrapped for production, and you're offered a `start:local` that runs the production build with your secrets. Finally it offers a short "Secrets (arca)" section for `AGENTS.md`. The secret values are copied into arca, and your `.env` files aren't changed. The first copy creates the master key: in your OS keychain, or [behind a passphrase](#where-things-are-kept) on WSL and headless Linux.
+
+2. **Check it works:** `npm run dev` starts with an `arca ▸ … output masked` line and your app behaves as before. `npx arca list` shows where each variable now comes from, and `npx arca doctor` checks the whole setup. Until the next step, the leak guard warns that the secrets are still in your `.env` files. That's expected.
+
+3. **Remove the plaintext copies:**
+
+   ```console
+   npx arca import --delete
+   ```
+
+   This removes only the entries that were imported. Config lines and comments stay, and a file is deleted only if nothing else was in it.
+
+4. **Commit** `arca.json`, `package.json` and `AGENTS.md`. None of them holds a value. Keep your `.env` files out of git as before.
+
+5. **Teammates** pull, run `npm install` and `npm run dev`. arca names the missing variables, and `npx arca setup` asks for each one. For variables with `"generate"` in `arca.json`, it offers a random value instead.
+
+CI and deploys need no changes: without a store, `arca run` passes the platform's variables through ([CI and deploys](#ci-and-deploys)).
+
+To go back, `npx arca export --output .env.local` writes every value to a file again (a person at a terminal only), and you remove `arca run -- ` from your scripts.
 
 ## Commands
 
@@ -157,7 +188,7 @@ arca can't stop deliberate workarounds: an agent that hides its markers, edits `
 
 ## Status
 
-Profiles (several sets of values per project, switched with `arca use`) are in. A PTY mode for fully interactive tools, an in-process loader for IDE test runners, and `arca scan` are planned.
+Usable today on Windows and Linux: everything above, including profiles and the passphrase cache. Checked daily against real Next.js and TanStack Start dev servers in a browser. Planned: a PTY mode for fully interactive tools, an in-process loader for IDE test runners, and `arca scan`.
 
 ## License
 
