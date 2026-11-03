@@ -45,7 +45,7 @@ Each spike is a throwaway script. The output is a short note added to this folde
 | S3 | Agent markers: actually run `env` from inside Claude Code, Codex CLI, Cursor agent, Copilot agent mode, Gemini CLI, OpenCode and T3 Code. Record which vars are set, and which IDEs set markers in *human* terminals too (false positives). | Accuracy of D2 and D4 |
 | S4 | `npm_lifecycle_event` / `npm_lifecycle_script` under npm, pnpm, yarn (classic and berry), bun, including nested `npm run` inside scripts and Turbo-spawned tasks | Script verification for D2 |
 | S5 | Redactor: throughput (shouldn't matter, under 1 ms/MB), correctness on split chunks, multi-byte text and `\r` progress bars | Correctness of the core promise |
-| S6 | Vite: are `VITE_*` vars that exist only in `process.env` exposed to `import.meta.env`? Astro inlining behaviour. Wrangler process env. | Framework claims in [05](05-framework-integration.md) |
+| S6 | Vite: are `VITE_*` vars that exist only in `process.env` exposed to `import.meta.env`? (✅ yes, verified 2026-11-03 in the layer 5 framework checks, see [10](10-platform-testing.md).) Astro inlining behaviour. Wrangler process env. | Framework claims in [05](05-framework-integration.md) |
 | S7 | Windows Hello `UserConsentVerifier` from Node (PowerShell WinRT shim vs a tiny prebuilt helper) and macOS `LAContext` helper: latency and packaging | Phase 2 human gate. Matters more now that every write needs it (D4). |
 | S8 | `node-pty` as an optional dependency: are prebuilt binaries available for win-x64/arm64, darwin-x64/arm64, linux-x64/arm64 and current Node versions without a compiler? ConPTY behaviour on Windows, resize forwarding, Ctrl+C, and masking of PTY output. | PTY mode (D3) without making installs fragile |
 

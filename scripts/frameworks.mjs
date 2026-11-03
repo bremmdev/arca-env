@@ -19,10 +19,23 @@ import { pathToFileURL } from 'node:url'
 
 const repo = join(import.meta.dirname, '..')
 const fixtures = join(import.meta.dirname, 'frameworks')
+// The fixtures' arca.json: acceptatie extends ontwikkel, overrides DATABASE_URL, inherits
+// STRIPE_SECRET_KEY and adds .env.acceptatie (config that must win over the framework's .env.local).
 const SECRETS = {
-  DATABASE_URL: 'postgres://app:fw-s3cret-9z8y7x@db.internal:5432/acme',
-  STRIPE_SECRET_KEY: 'sk_test_fwsecret_4d3c2b1a0z',
+  ontwikkel: {
+    DATABASE_URL: 'postgres://app:fw-dev-s3cret-9z8y7x@db-dev.internal:5432/acme',
+    STRIPE_SECRET_KEY: 'sk_test_fwsecret_4d3c2b1a0z',
+  },
+  acceptatie: {
+    DATABASE_URL: 'postgres://app:fw-acc-s3cret-1a2b3c@db-acc.internal:5432/acme',
+  },
 }
+const STRIPE_LENGTH = SECRETS.ontwikkel.STRIPE_SECRET_KEY.length
+/** One dev server start per profile, in the same folder, so the second one runs on the first one's caches. */
+const RUNS = [
+  { profile: 'ontwikkel', env: {}, dbHost: 'db-dev.internal', config: 'from-env-local' },
+  { profile: 'acceptatie', env: { ARCA_PROFILE: 'acceptatie' }, dbHost: 'db-acc.internal', config: 'from-acceptatie' },
+]
 const PASSPHRASE = 'frameworks-passphrase-123'
 const PLAYWRIGHT = 'playwright-core@1.64.1'
 // Not `localhost`: it resolves to ::1 first on some Linux hosts and 127.0.0.1 on others.
@@ -94,13 +107,13 @@ function cleanEnv(api, extra = {}) {
 
 /** Stores the secrets through the installed package's API, like a person piping them in. */
 async function storeSecrets(api, app) {
-  for (const [name, value] of Object.entries(SECRETS)) {
+  for (const [profile, name, value] of Object.entries(SECRETS).flatMap(([p, vars]) => Object.entries(vars).map(([k, v]) => [p, k, v]))) {
     let out = ''
     const write = (s) => void (out += s)
     const noPrompt = async (m) => {
       throw new Error(`unexpected prompt: ${m}`)
     }
-    const code = await api.main(['set', name], {
+    const code = await api.main(['set', name, '--profile', profile], {
       env: cleanEnv(api),
       cwd: app,
       platform: process.platform,
@@ -112,7 +125,7 @@ async function storeSecrets(api, app) {
       childStdin: 'ignore',
       handleSignals: false,
     })
-    check(code === 0, `arca set ${name} failed`, out)
+    check(code === 0, `arca set ${name} --profile ${profile} failed`, out)
   }
 }
 
@@ -159,8 +172,10 @@ async function stopDev(dev) {
   })
 }
 
+/** Raw values of any profile in the text, by name. */
 function leaked(text) {
   return Object.entries(SECRETS)
+    .flatMap(([p, vars]) => Object.entries(vars).map(([k, v]) => [`${k} (${p})`, v]))
     .filter(([, v]) => text.includes(v))
     .map(([k]) => k)
 }
@@ -168,27 +183,28 @@ function leaked(text) {
 const FRAMEWORKS = {
   next: {
     devArgs: (port) => ['--port', String(port), '--hostname', HOST],
+    publicVar: 'NEXT_PUBLIC_APP_LABEL',
     // React replays server component logs in the browser with a "Server" badge, whose styling
     // arguments end up between the logged ones.
     browserLog: { what: 'the replayed server log', test: (l) => l.includes('page sees DATABASE_URL =') && l.includes('Server') && l.includes('[arca:DATABASE_URL]') },
-    extra: async (app, dev) => {
+    extra: async (app, label) => {
       // Next 16.4 copies server console calls into a log file meant for agents and MCP tools.
       const file = join(app, '.next', 'dev', 'logs', 'next-development.log')
-      await step('next: .next/dev/logs/next-development.log gets the masked value', async () => {
+      await step(`${label}: .next/dev/logs/next-development.log gets the masked value`, async () => {
         await waitFor(() => existsSync(file) && readFileSync(file, 'utf8').includes('[arca:DATABASE_URL]'), 20_000, 'the masked value in the log file').catch((e) => {
           throw new Error(`${e.message}\n${existsSync(file) ? readFileSync(file, 'utf8').slice(-2000) : 'no log file'}`)
         })
         const text = readFileSync(file, 'utf8')
         check(leaked(text).length === 0, `the log file holds the raw ${leaked(text).join(', ')}`, text)
       })
-      return dev
     },
   },
   'tanstack-start': {
     devArgs: (port) => ['--port', String(port), '--strictPort', '--host', HOST],
+    publicVar: 'VITE_APP_LABEL',
     // TanStack Devtools pipes server console calls to the browser as "[Server] LOG …".
     browserLog: { what: 'a piped server log', test: (l) => l.includes('Connection:') && l.includes('[arca:DATABASE_URL]') },
-    extra: async (_app, dev) => dev,
+    extra: async () => {},
   },
 }
 
@@ -202,13 +218,18 @@ async function runFramework(name, spec, tarball, browser) {
   })
   const api = await import(pathToFileURL(createRequire(join(app, 'package.json')).resolve('@bremmdev/arca-env')).href)
   await storeSecrets(api, app)
+  for (const run of RUNS) await devRun(name, spec, app, api, run, browser)
+}
 
+/** One `npm run dev` on one profile, with every check. */
+async function devRun(name, spec, app, api, run, browser) {
+  const label = `${name} [${run.profile}]`
   const port = await freePort()
   const url = `http://${HOST}:${port}`
-  const dev = startDev(app, spec.devArgs(port), cleanEnv(api))
+  const dev = startDev(app, spec.devArgs(port), cleanEnv(api, run.env))
   const consoleLogs = []
   try {
-    await step(`${name}: \`npm run dev\` starts through arca run`, async () => {
+    await step(`${label}: \`npm run dev\` starts through arca run`, async () => {
       await waitFor(async () => {
         if (dev.exited) throw new Error(`the dev server exited\n${dev.out}`)
         return fetch(url, { signal: AbortSignal.timeout(10_000) }).then(() => true, () => false)
@@ -218,32 +239,44 @@ async function runFramework(name, spec, tarball, browser) {
     const page = await browser.newPage()
     page.on('console', (m) => consoleLogs.push(m.text()))
     page.on('response', (r) => r.status() >= 400 && consoleLogs.push(`(HTTP ${r.status()} ${r.url()})`))
-    await step(`${name}: the page renders with the secret injected`, async () => {
+    const text = (id) => page.locator(`#${id}`).textContent({ timeout: 60_000 })
+    await step(`${label}: the page gets this profile's values (own, inherited, ARCA_PROFILE)`, async () => {
       await page.goto(url, { timeout: 120_000 })
-      const text = await page.locator('#injected').textContent({ timeout: 60_000 })
-      check(text.includes(`has ${SECRETS.STRIPE_SECRET_KEY.length} characters`), `expected the secret's length on the page, got "${text}"`)
+      const got = { profile: await text('profile'), dbHost: await text('dbhost'), stripe: await text('injected') }
+      check(got.profile === run.profile, `ARCA_PROFILE: expected ${run.profile}, got ${got.profile}`)
+      check(got.dbHost === run.dbHost, `DATABASE_URL points at ${got.dbHost}, expected ${run.dbHost} (this profile's value)`)
+      check(got.stripe.includes(`has ${STRIPE_LENGTH} characters`), `STRIPE_SECRET_KEY: expected ${STRIPE_LENGTH} characters, got "${got.stripe}"`)
+    })
+    await step(`${label}: server-side config is ${run.config}`, async () => {
+      const got = await text('title')
+      check(got === run.config, `APP_TITLE: expected ${run.config}, got ${got}`)
+    })
+    await step(`${label}: the browser bundle's public value is ${run.config}`, async () => {
+      await waitFor(async () => (await text('public')) !== 'loading', 30_000, 'the client component to hydrate')
+      const got = await text('public')
+      check(got === run.config, `${spec.publicVar} in the browser: expected ${run.config}, got ${got}`)
     })
     // Give client-side dev tools a moment to connect before the server logs again.
     await new Promise((r) => setTimeout(r, 2000))
     await page.evaluate(() => fetch('/api/leak').then((r) => r.status))
 
-    await step(`${name}: server logs in the terminal are masked`, async () => {
+    await step(`${label}: server logs in the terminal are masked`, async () => {
       await waitFor(() => dev.out.includes('Connection: [arca:DATABASE_URL]') && dev.out.includes('Using Stripe key [arca:STRIPE_SECRET_KEY]'), 30_000, 'the masked lines in the terminal').catch((e) => {
         throw new Error(`${e.message}\n${dev.out.slice(-3000)}`)
       })
     })
-    await step(`${name}: server logs in the browser console are masked`, async () => {
+    await step(`${label}: server logs in the browser console are masked`, async () => {
       await waitFor(() => consoleLogs.some(spec.browserLog.test), 30_000, `${spec.browserLog.what}, masked, in the browser console`).catch((e) => {
         throw new Error(`${e.message}\n--- browser console ---\n${consoleLogs.join('\n').slice(-3000)}\n--- dev server ---\n${dev.out.slice(-2000)}`)
       })
     })
-    await spec.extra(app, dev)
+    await spec.extra(app, label)
     await page.close()
   } finally {
     await stopDev(dev)
   }
 
-  await step(`${name}: no raw secret in the terminal or the browser console`, () => {
+  await step(`${label}: no raw secret in the terminal or the browser console`, () => {
     check(leaked(dev.out).length === 0, `the terminal shows the raw ${leaked(dev.out).join(', ')}`, dev.out)
     const browserText = consoleLogs.join('\n')
     check(leaked(browserText).length === 0, `the browser console shows the raw ${leaked(browserText).join(', ')}`, browserText)

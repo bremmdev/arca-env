@@ -1,8 +1,15 @@
 {
   "id": "arc_fixturetanstack",
   "name": "arca-fixture-tanstack-start",
+  "defaultProfile": "ontwikkel",
+  "profiles": {
+    "ontwikkel": {},
+    "acceptatie": { "extends": "ontwikkel", "envFiles": [".env.acceptatie"] }
+  },
   "vars": {
     "DATABASE_URL": { "required": true },
-    "STRIPE_SECRET_KEY": { "required": true }
+    "STRIPE_SECRET_KEY": { "required": true },
+    "APP_TITLE": { "sensitive": false },
+    "VITE_APP_LABEL": { "sensitive": false }
   }
 }
