@@ -46,6 +46,7 @@ Values (only a person at a terminal)
 
 Project
   init [--yes] [--new-id] Set up arca: arca.json, import secrets, wrap scripts, AGENTS.md
+                          (--no-import: store no values yet, import later)
   policy [set agent-run scripts|deny]
   projects [rm <id>]      Projects with secrets on this machine
 

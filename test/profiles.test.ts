@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { harness, tempDir, writeJson, type Harness } from './helpers.js'
@@ -271,6 +271,46 @@ describe('init with .env.<name> files', () => {
     const del = await h.human(['import', '.env.acceptatie', '--profile', 'acceptatie', '--delete'])
     expect(del.code).toBe(0)
     expect(readFileSync(join(h.dir, '.env.acceptatie'), 'utf8')).toBe('APP_TITLE=Hello acc\n')
+  })
+
+  it('README route: init --no-import, rename the default profile, then import each file', async () => {
+    const DB_T = 'postgres://app:tst-pass-444@db-tst.local:5432/acme'
+    const h = harness(tempDir())
+    writeJson(join(h.dir, 'package.json'), { name: 'acme', scripts: { dev: 'next dev' }, devDependencies: { next: '^16.0.0' } })
+    writeFileSync(join(h.dir, '.env.local'), `DATABASE_URL=${DB_O}\nSTRIPE_SECRET_KEY=${STRIPE}\nAPP_TITLE=Hello\n`)
+    writeFileSync(join(h.dir, '.env.acceptatie'), `DATABASE_URL=${DB_A}\nSTRIPE_SECRET_KEY=${STRIPE}\nAPP_TITLE=Hello acc\n`)
+    writeFileSync(join(h.dir, '.env.testomgeving'), `DATABASE_URL=${DB_T}\nSTRIPE_SECRET_KEY=${STRIPE}\n`)
+    writeFileSync(join(h.dir, '.env.test'), `DATABASE_URL=${DB_T}\n`)
+    const init = await h.human(['init', '--no-import'], {
+      answers: { text: ['acme'], multiselect: [['DATABASE_URL', 'STRIPE_SECRET_KEY'], ['dev']], confirm: [true, true, true] },
+    })
+    expect(init.code).toBe(0)
+    expect(init.io.err()).toContain('Left alone: .env.test (framework mode files')
+    expect(readdirSync(h.store, { recursive: true }).some((f) => String(f).endsWith('.vault'))).toBe(false)
+
+    const file = join(h.dir, 'arca.json')
+    const cfg = JSON.parse(readFileSync(file, 'utf8'))
+    expect(Object.keys(cfg.profiles)).toEqual(['default', 'acceptatie', 'testomgeving'])
+    writeJson(file, {
+      ...cfg,
+      defaultProfile: 'ontwikkel',
+      profiles: {
+        ontwikkel: {},
+        acceptatie: { ...cfg.profiles.acceptatie, extends: 'ontwikkel' },
+        testomgeving: { ...cfg.profiles.testomgeving, extends: 'ontwikkel' },
+      },
+    })
+
+    expect((await h.human(['import', '--delete'])).code).toBe(0)
+    const acc = await h.human(['import', '.env.acceptatie', '-p', 'acceptatie', '--delete'])
+    expect(acc.io.err()).toContain('same value as the profile it extends, so still inherited: STRIPE_SECRET_KEY')
+    expect((await h.human(['import', '.env.testomgeving', '-p', 'testomgeving', '--delete'])).code).toBe(0)
+
+    expect(readFileSync(join(h.dir, '.env.local'), 'utf8')).toBe('APP_TITLE=Hello\n')
+    expect(existsSync(join(h.dir, '.env.testomgeving'))).toBe(false)
+    expect((await h.human(['reveal', 'DATABASE_URL'])).io.out().trim()).toBe(DB_O)
+    expect((await h.human(['reveal', 'DATABASE_URL', '-p', 'testomgeving'])).io.out().trim()).toBe(DB_T)
+    expect((await h.agent(['list', '-p', 'acceptatie'])).io.out()).toMatch(/STRIPE_SECRET_KEY\s+✔ arca ↳ ontwikkel/)
   })
 })
 

@@ -51,7 +51,7 @@ Each spike is a throwaway script. The output is a short note added to this folde
 
 ## Implementation status
 
-Checked against the code on 2026-11-03. **0.3.1 is published on npm** (Phase 1 plus profiles, Windows and Linux only per D11), requiring Node 24 or newer. Since then on `main`, unreleased: the passphrase cache (O1), the typo-prompt default (P10), the locked-keyring tip (P8), and the README migration section. With those, the Phase 1 scope below is complete except your check of the `init`/`setup` prompts in a real terminal (O4, O11).
+Checked against the code on 2026-11-03. **0.3.1 is published on npm** (Phase 1 plus profiles, Windows and Linux only per D11), requiring Node 24 or newer. Since then on `main`, unreleased: the passphrase cache (O1), the typo-prompt default (P10), the locked-keyring tip (P8), and the README migration section. With those, and your real-terminal check of `init`, `import --delete`, `setup` and the profile confirmations on the packed 0.4.0 (O4, O11, 2026-11-03), the Phase 1 scope below is complete: 0.4.0 is the MVP.
 
 Version 0.1 (2026-10-22) implemented Phase 1 **without profiles**, as asked: first validate replacing or supplementing a `.env` with one set of values. Internally everything used a single set (`projects/<id>/default.vault`), so profiles could be added later without migrating the store.
 
@@ -149,7 +149,7 @@ Scope:
 
 Nothing blocking. All product decisions are recorded as D1–D11 above. Open as of 2026-11-03:
 
-- **Before calling 0.4.0 the MVP:** your check of the `init` and `setup` prompts (and `profiles copy` / `rm` confirmations) in a real terminal (O4, O11).
+- **Release 0.4.0 (the MVP):** all checks passed (O4, O11 done 2026-11-03). Commit, push, and CI publishes.
 - **Spikes not finished:** S2 (Vite shortcuts and other interactive tools through the pipe; Next's colours and Ctrl+C are fine), S3 for agents other than Claude Code, S4 for yarn and bun (npm and pnpm done), S5, and S7–S8 for Phase 2. Details per item in [08](08-issue-log.md#open-problems-and-things-not-verified-yet).
 - **Overhead budget:** [03 §7](03-architecture.md#7-runner-arca-run) sets under 80 ms. S1 measured about 100 ms on Windows, mostly the extra Node startup. Adjust the budget, or make startup faster?
 - **Policy file deletion:** a deleted `policy.vault` falls back to `scripts`, so a `deny` can be loosened by tampering with the store. Documented in [02](02-threat-model.md#prompt-injection-walkthrough). Leave it as accepted circumvention, or detect it?

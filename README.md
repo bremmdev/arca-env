@@ -70,6 +70,34 @@ CI and deploys need no changes: without a store, `arca run` passes the platform'
 
 To go back, `npx arca export --output .env.local` writes every value to a file again (a person at a terminal only), and you remove `arca run -- ` from your scripts.
 
+### Several environments in one `.env.local`
+
+A common setup is one `.env.local` with a block per environment, all but one commented out, and switching by moving the comments. Commented-out lines are still plain text that an agent can read, so they have to leave the file too. Each block becomes a [profile](#profiles):
+
+1. **Split the file.** Keep the block you normally run (say ontwikkel) in `.env.local`, uncommented. Put each other block, uncommented, in its own `.env.<profile>` file: `.env.acceptatie`, `.env.productie`. Delete the commented blocks from `.env.local`.
+
+   Don't use `.env.test`, `.env.development` or `.env.production`: Next.js and Vite load those themselves depending on the mode (`.env.test` under Vitest or Jest), so `init` leaves them alone. Pick another name, such as `.env.testomgeving`. The file name becomes the profile name.
+
+2. **Run `npx arca init`.** For each file it asks "Create profile acceptatie from .env.acceptatie?". A profile that shares most secrets with `.env.local` `extends` the default set and stores only the values that differ, so a shared `STRIPE_SECRET_KEY` is stored once. Config lines stay in each file, and only that profile loads them.
+
+3. **Remove the plaintext copies** with the commands `init` prints at the end:
+
+   ```console
+   npx arca import --delete
+   npx arca import .env.acceptatie --profile acceptatie --delete
+   npx arca import .env.productie --profile productie --delete
+   ```
+
+4. **Switch** with `npx arca use acceptatie` and back with `npx arca use --reset`, or for one terminal `ARCA_PROFILE=productie npm run dev`.
+
+`init` calls the `.env.local` set `default`. You never type the default profile's name, so that works fine. To name it `ontwikkel` instead, rename it before importing, because stored values belong to a profile name:
+
+1. `npx arca init --no-import`
+2. In `arca.json`, rename `default` to `ontwikkel` under `profiles` and in every `extends`, and add `"defaultProfile": "ontwikkel"`.
+3. Run the import commands of step 3, default set first.
+
+Teammates do the same with their own `.env.local`, or pull the commit and run `npx arca setup` for the default set and `npx arca setup -p acceptatie` for each other profile they use. arca doesn't sync values between machines.
+
 ## Commands
 
 arca is installed per project, so in a terminal you run it as `npx arca <command>`. A bare `arca` gives "command not found", because `node_modules/.bin` isn't on your PATH. Inside `package.json` scripts, plain `arca run -- …` works, because npm adds that folder for scripts. For a bare `arca` everywhere, also install it globally: `npm i -g @bremmdev/arca-env`.
@@ -85,7 +113,7 @@ arca is installed per project, so in a terminal you run it as `npx arca <command
 | `arca unset NAME` / `arca restore NAME` | Remove a value / undo the last change | ❌ person only |
 | `arca reveal NAME` / `arca export` | Show one value / print all (`--format dotenv\|json\|shell`, `--output file`) | ❌ person only |
 | `arca import [files] [--only A,B] [--delete]` | Move secrets from `.env` files into arca | ❌ person only |
-| `arca init [--yes] [--new-id]` | Set up a project | ✅ without the import |
+| `arca init [--yes] [--new-id] [--no-import]` | Set up a project (`--no-import`: write `arca.json` and scripts, store no values yet) | ✅ without the import |
 | `arca use [profile]` / `arca use --reset` | Show or switch the active profile | ✅ (only when you ask) |
 | `arca profiles` / `profiles add <name> [--extends p]` / `profiles diff <a> <b>` | List, add and compare profiles. Names only. | ✅ |
 | `arca profiles copy <from> <to> [--only A,B]` / `profiles rm <name>` | Copy values between profiles / remove a profile and its values | ❌ person only |
