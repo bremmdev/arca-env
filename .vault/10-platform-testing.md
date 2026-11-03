@@ -85,15 +85,16 @@ The script strips agent markers and `npm_*`/`ARCA_*` vars it inherited, so it gi
 
 ✅ `npm run smoke -- --pnpm` (2026-11-03) runs every step with pnpm instead: `pnpm add` of the tarball, `pnpm run dev`, `pnpm exec arca`. The package then sits behind a symlink (a junction on Windows) in `node_modules/.pnpm/@bremmdev+arca-env@file+…`, so the console guard is preloaded from a path with `+` and `@` in it. Runs in every test job after the npm smoke test, with pnpm 12 (pinned major). Passed on Windows and Linux before it went into CI. yarn isn't covered.
 
-### Layer 5 (todo): framework coverage
+### Layer 5: framework coverage (`scripts/frameworks.mjs`, `.github/workflows/frameworks.yml`) ✅ built 2026-11-03
 
-The smoke test has no framework on purpose: framework installs are slow and a broken framework release shouldn't fail an arca push. Framework-specific behaviour is still worth covering in CI, as a **separate job that runs daily (`schedule`) and on version bumps**, never blocking a normal push:
+The smoke test has no framework on purpose: framework installs are slow and a broken framework release shouldn't fail an arca push. So framework behaviour has **its own workflow**, `frameworks.yml`: daily (04:23 UTC), on every push to main that changes `package.json` (so every version bump), and by hand (`workflow_dispatch`). It never blocks a push or a publish. Windows and Ubuntu, Node 24.
 
-- Next.js: `next dev` through `arca run`; server `console.log` masked in the terminal, in `.next/dev/logs/next-development.log` and in React's browser log replay (issues U3, U4 in [08](08-issue-log.md)).
-- TanStack Start or Vite: devtools console piping to the browser is masked (U2).
-- Both OSes. The browser checks need headless Chrome (Playwright), which is the slow part.
-
-The `examples/` folders on your machine are the starting point, but they're gitignored, so the job needs small committed fixtures or scaffolds them with `create-next-app` / `create-vite` at a pinned version.
+- **Fixtures** in `scripts/frameworks/next` and `scripts/frameworks/tanstack-start`: trimmed copies of the `examples/` apps, at exactly the versions you run (Next 16.4.2, React 19.3.1; TanStack Start 1.169.3, Vite 8.3.5, devtools-vite 0.8.5). Plain JS for Next and no TypeScript package, so the installs stay small. They live under `scripts/`, outside the tsconfig and vitest scope. No lockfiles: the direct versions are pinned, the daily run picks up drift below them, which is what it's for.
+- **The script** packs the package, copies each fixture to a temp folder, installs the tarball, stores two secrets in a throwaway passphrase store, runs `npm run dev -- --port <free>` and opens the page in headless Chrome (`playwright-core` with the installed Google Chrome, no browser download).
+- **Checks per framework:** the page shows the secret's length (injected), the page and `/api/leak` log the secrets and the terminal shows `[arca:…]`; the browser console gets the masked value (Next: React's "Server" log replay, U3; TanStack: devtools console piping, U2); Next's `.next/dev/logs/next-development.log` holds the masked value (U4); no raw value anywhere in the terminal, the browser console or the log file.
+- **The checks can fail:** a control run with `dist/guard.mjs` emptied failed 5 checks, each naming the raw value in the browser console or the log file, while terminal masking (a separate layer) still held.
+- Everything binds to `127.0.0.1`, not `localhost`. In a Debian container `localhost` resolved to `::1` first, and neither the readiness probe nor TanStack's server-to-browser pipe got through (P11).
+- Locally: `npm run build && npm run frameworks` (or `-- next` for one). Without Google Chrome, `ARCA_FRAMEWORKS_CHANNEL=` plus `npx playwright-core install chromium`. Passed on Windows and in a `node:24` container before it went into CI.
 
 ### Layer 4: local and manual testing on your machine
 
@@ -140,4 +141,5 @@ Record anything found in [08](08-issue-log.md), as usual.
 6. ✅ First pass of the manual checklist (2026-11-02). WSL already had Node 24.15 (nvm); the suite and the smoke test pass there (110 tests). M4–M6 were driven through a real pseudo-terminal (a small Python `pty` driver), M5 in Docker. One fix: the locked-keyring message (P8). M1–M3 done 2026-11-03 (P9: the batch prompt is Volta's; P10 fixed). The whole checklist has had a first pass.
 7. ✅ README/doctor wording for macOS (2026-11-02): a "Supported platforms" section in the README; `arca init` and `arca doctor` warn on macOS without failing (tested); D11 in [06](06-roadmap.md).
 8. ✅ arm64 and Alpine jobs, pnpm smoke test (2026-11-03). No bugs found.
+9. ✅ Layer 5, framework coverage (2026-11-03): Next.js and TanStack Start in a daily workflow. No arca bugs found.
 9. Todo: framework coverage job (layer 5), daily and on version bumps.

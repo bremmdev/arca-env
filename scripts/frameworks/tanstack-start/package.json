@@ -1,0 +1,20 @@
+{
+  "name": "arca-fixture-tanstack-start",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "arca run -- vite dev"
+  },
+  "dependencies": {
+    "@tanstack/react-devtools": "0.10.13",
+    "@tanstack/react-router": "1.170.45",
+    "@tanstack/react-start": "1.169.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@tanstack/devtools-vite": "0.8.5",
+    "@vitejs/plugin-react": "6.1.2",
+    "vite": "8.3.5"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "id": "arc_fixturetanstack",
+  "name": "arca-fixture-tanstack-start",
+  "vars": {
+    "DATABASE_URL": { "required": true },
+    "STRIPE_SECRET_KEY": { "required": true }
+  }
+}
