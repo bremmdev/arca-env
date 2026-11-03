@@ -247,6 +247,7 @@ export async function doctorCommand(s: Session): Promise<number> {
     const cache = await passphraseCacheStatus(s.store, s.io)
     if (cache === 'off') info('Passphrase cache: off (ARCA_PASSPHRASE_CACHE=0), so every run asks')
     else if (typeof cache === 'number') info(`Passphrase remembered until ${new Date(cache).toLocaleString()} (kernel keyring, cleared on reboot)`)
+    else if (cache) warn(`Passphrase cache unavailable, so every run asks: ${cache.problem}`)
   }
 
   if (!s.project) {

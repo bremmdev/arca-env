@@ -2,7 +2,7 @@
 
 **Keep secrets out of `.env` files, and out of reach of AI agents.**
 
-arca moves the secrets in your `.env` / `.env.local` into an encrypted store outside the project, and hands them to your app only when it runs. Your app still reads `process.env.DATABASE_URL`, so Next.js, Vite, Astro, TanStack Start, Nuxt, SvelteKit, Prisma and plain Node keep working. Non-sensitive config (`PORT`, `NEXT_PUBLIC_*`, feature flags) can stay in `.env`.
+arca moves the secrets in your `.env` / `.env.local` into an encrypted store outside the project, and hands them to your app only when it runs. Your app still reads `process.env.DATABASE_URL`, so Next.js, Vite, Astro, TanStack Start, Nuxt, SvelteKit, and plain Node keep working. Non-sensitive config (`PORT`, `NEXT_PUBLIC_*`, feature flags) can stay in `.env`.
 
 - **No secret files in the repo.** Values live in an AES-256-GCM store in your user data folder. The key sits in your OS keychain, so there's no password to type.
 - **Masked output, always.** Anything your app prints goes through arca, which replaces secrets with `[arca:DATABASE_URL]`, including the encoded forms and the password inside a connection string. Inside your app's Node processes, a console guard (preloaded through `NODE_OPTIONS`) masks `console.*` arguments too, so dev tools that forward server logs to the browser (such as TanStack Devtools) only see `[arca:NAME]`.
@@ -50,7 +50,7 @@ The usual starting point: a `.env.local` (or `.env`) that mixes secrets (`DATABA
    npx arca init
    ```
 
-   It asks for the project name, then which variables are secrets. The ones that look like secrets are preselected; public names such as `NEXT_PUBLIC_*` aren't. Secrets move into arca, everything else stays in your `.env` files as config, and both are declared in `arca.json` (names only). Each `.env.<name>` file, such as `.env.acceptatie`, is offered as a [profile](#profiles). Then it asks which scripts to wrap with `arca run`. `start` stays unwrapped for production, and you're offered a `start:local` that runs the production build with your secrets. Finally it offers a short "Secrets (arca)" section for `AGENTS.md`. The secret values are copied into arca, and your `.env` files aren't changed. The first copy creates the master key: in your OS keychain, or [behind a passphrase](#where-things-are-kept) on WSL and headless Linux.
+   It asks for the project name, then which variables are secrets. The ones that look like secrets are preselected; public names such as `NEXT_PUBLIC_*` aren't. Secrets move into arca, everything else stays in your `.env` files as config, and both are declared in `arca.json` (names only). Each `.env.<name>` file, such as `.env.staging`, is offered as a [profile](#profiles). Then it asks which scripts to wrap with `arca run`. `start` stays unwrapped for production, and you're offered a `start:local` that runs the production build with your secrets. Finally it offers a short "Secrets (arca)" section for `AGENTS.md`. The secret values are copied into arca, and your `.env` files aren't changed. The first copy creates the master key: in your OS keychain, or [behind a passphrase](#where-things-are-kept) on WSL and headless Linux.
 
 2. **Check it works:** `npm run dev` starts with an `arca ▸ … output masked` line and your app behaves as before. `npx arca list` shows where each variable now comes from, and `npx arca doctor` checks the whole setup. Until the next step, the leak guard warns that the secrets are still in your `.env` files. That's expected.
 
@@ -74,51 +74,51 @@ To go back, `npx arca export --output .env.local` writes every value to a file a
 
 A common setup is one `.env.local` with a block per environment, all but one commented out, and switching by moving the comments. Commented-out lines are still plain text that an agent can read, so they have to leave the file too. Each block becomes a [profile](#profiles):
 
-1. **Split the file.** Keep the block you normally run (say ontwikkel) in `.env.local`, uncommented. Put each other block, uncommented, in its own `.env.<profile>` file: `.env.acceptatie`, `.env.productie`. Delete the commented blocks from `.env.local`.
+1. **Split the file.** Keep the block you normally run (say dev) in `.env.local`, uncommented. Put each other block, uncommented, in its own `.env.<profile>` file: `.env.staging`, `.env.prod`. Delete the commented blocks from `.env.local`.
 
-   Don't use `.env.test`, `.env.development` or `.env.production`: Next.js and Vite load those themselves depending on the mode (`.env.test` under Vitest or Jest), so `init` leaves them alone. Pick another name, such as `.env.testomgeving`. The file name becomes the profile name.
+   Don't use `.env.test`, `.env.development` or `.env.production`: Next.js and Vite load those themselves depending on the mode (`.env.test` under Vitest or Jest), so `init` leaves them alone. Pick another name, such as `.env.qa`. The file name becomes the profile name.
 
-2. **Run `npx arca init`.** For each file it asks "Create profile acceptatie from .env.acceptatie?". A profile that shares most secrets with `.env.local` `extends` the default set and stores only the values that differ, so a shared `STRIPE_SECRET_KEY` is stored once. Config lines stay in each file, and only that profile loads them.
+2. **Run `npx arca init`.** For each file it asks "Create profile staging from .env.staging?". A profile that shares most secrets with `.env.local` `extends` the default set and stores only the values that differ, so a shared `STRIPE_SECRET_KEY` is stored once. Config lines stay in each file, and only that profile loads them.
 
 3. **Remove the plaintext copies** with the commands `init` prints at the end:
 
    ```console
    npx arca import --delete
-   npx arca import .env.acceptatie --profile acceptatie --delete
-   npx arca import .env.productie --profile productie --delete
+   npx arca import .env.staging --profile staging --delete
+   npx arca import .env.prod --profile prod --delete
    ```
 
-4. **Switch** with `npx arca use acceptatie` and back with `npx arca use --reset`, or for one terminal `ARCA_PROFILE=productie npm run dev`.
+4. **Switch** with `npx arca use staging` and back with `npx arca use --reset`, or for one terminal `ARCA_PROFILE=prod npm run dev`.
 
-`init` calls the `.env.local` set `default`. You never type the default profile's name, so that works fine. To name it `ontwikkel` instead, rename it before importing, because stored values belong to a profile name:
+`init` calls the `.env.local` set `default`. You never type the default profile's name, so that works fine. To name it `dev` instead, rename it before importing, because stored values belong to a profile name:
 
 1. `npx arca init --no-import`
-2. In `arca.json`, rename `default` to `ontwikkel` under `profiles` and in every `extends`, and add `"defaultProfile": "ontwikkel"`.
+2. In `arca.json`, rename `default` to `dev` under `profiles` and in every `extends`, and add `"defaultProfile": "dev"`.
 3. Run the import commands of step 3, default set first.
 
-Teammates do the same with their own `.env.local`, or pull the commit and run `npx arca setup` for the default set and `npx arca setup -p acceptatie` for each other profile they use. arca doesn't sync values between machines.
+Teammates do the same with their own `.env.local`, or pull the commit and run `npx arca setup` for the default set and `npx arca setup -p staging` for each other profile they use. arca doesn't sync values between machines.
 
 ## Commands
 
 arca is installed per project, so in a terminal you run it as `npx arca <command>`. A bare `arca` gives "command not found", because `node_modules/.bin` isn't on your PATH. Inside `package.json` scripts, plain `arca run -- …` works, because npm adds that folder for scripts. For a bare `arca` everywhere, also install it globally: `npm i -g @bremmdev/arca-env`.
 
-| Command | What it does | AI agents |
-|---|---|---|
-| `arca run [--only A,B] -- <cmd>` | Run with secrets injected, output masked | ✅ only through `package.json` scripts |
-| `arca list` | Every variable and where it comes from (arca, `.env`, missing). Names only. | ✅ |
-| `arca check [--strict]` | Exit 1 when required variables are missing. `--strict` also fails on secrets in `.env` files. | ✅ |
-| `arca doctor` | Keychain, project, scripts and leak-guard diagnosis | ✅ |
-| `arca set NAME [--generate]` | Store a value: hidden prompt, `… \| arca set NAME`, or a random value | ❌ person only |
-| `arca setup [--all]` | Prompt for every missing required variable | ❌ person only |
-| `arca unset NAME` / `arca restore NAME` | Remove a value / undo the last change | ❌ person only |
-| `arca reveal NAME` / `arca export` | Show one value / print all (`--format dotenv\|json\|shell`, `--output file`) | ❌ person only |
-| `arca import [files] [--only A,B] [--delete]` | Move secrets from `.env` files into arca | ❌ person only |
-| `arca init [--yes] [--new-id] [--no-import]` | Set up a project (`--no-import`: write `arca.json` and scripts, store no values yet) | ✅ without the import |
-| `arca use [profile]` / `arca use --reset` | Show or switch the active profile | ✅ (only when you ask) |
-| `arca profiles` / `profiles add <name> [--extends p]` / `profiles diff <a> <b>` | List, add and compare profiles. Names only. | ✅ |
-| `arca profiles copy <from> <to> [--only A,B]` / `profiles rm <name>` | Copy values between profiles / remove a profile and its values | ❌ person only |
-| `arca policy set agent-run deny` | Stop agents from getting secrets at all in this project | ❌ person only |
-| `arca projects [rm <id>]` | Projects with secrets on this machine | list ✅ |
+| Command                                                                         | What it does                                                                                  | AI agents                              |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------- |
+| `arca run [--only A,B] -- <cmd>`                                                | Run with secrets injected, output masked                                                      | ✅ only through `package.json` scripts |
+| `arca list`                                                                     | Every variable and where it comes from (arca, `.env`, missing). Names only.                   | ✅                                     |
+| `arca check [--strict]`                                                         | Exit 1 when required variables are missing. `--strict` also fails on secrets in `.env` files. | ✅                                     |
+| `arca doctor`                                                                   | Keychain, project, scripts and leak-guard diagnosis                                           | ✅                                     |
+| `arca set NAME [--generate]`                                                    | Store a value: hidden prompt, `… \| arca set NAME`, or a random value                         | ❌ person only                         |
+| `arca setup [--all]`                                                            | Prompt for every missing required variable                                                    | ❌ person only                         |
+| `arca unset NAME` / `arca restore NAME`                                         | Remove a value / undo the last change                                                         | ❌ person only                         |
+| `arca reveal NAME` / `arca export`                                              | Show one value / print all (`--format dotenv\|json\|shell`, `--output file`)                  | ❌ person only                         |
+| `arca import [files] [--only A,B] [--delete]`                                   | Move secrets from `.env` files into arca                                                      | ❌ person only                         |
+| `arca init [--yes] [--new-id] [--no-import]`                                    | Set up a project (`--no-import`: write `arca.json` and scripts, store no values yet)          | ✅ without the import                  |
+| `arca use [profile]` / `arca use --reset`                                       | Show or switch the active profile                                                             | ✅ (only when you ask)                 |
+| `arca profiles` / `profiles add <name> [--extends p]` / `profiles diff <a> <b>` | List, add and compare profiles. Names only.                                                   | ✅                                     |
+| `arca profiles copy <from> <to> [--only A,B]` / `profiles rm <name>`            | Copy values between profiles / remove a profile and its values                                | ❌ person only                         |
+| `arca policy set agent-run deny`                                                | Stop agents from getting secrets at all in this project                                       | ❌ person only                         |
+| `arca projects [rm <id>]`                                                       | Projects with secrets on this machine                                                         | list ✅                                |
 
 ## `arca.json`
 
@@ -128,8 +128,15 @@ arca is installed per project, so in a terminal you run it as `npx arca <command
   "id": "arc_7k2m9q4x8w1z3p5n",
   "name": "acme-web",
   "vars": {
-    "DATABASE_URL": { "required": true, "description": "Local Postgres", "example": "postgres://postgres:postgres@localhost:5432/acme" },
-    "STRIPE_SECRET_KEY": { "required": true, "docs": "https://dashboard.stripe.com/test/apikeys" },
+    "DATABASE_URL": {
+      "required": true,
+      "description": "Local Postgres",
+      "example": "postgres://postgres:postgres@localhost:5432/acme"
+    },
+    "STRIPE_SECRET_KEY": {
+      "required": true,
+      "docs": "https://dashboard.stripe.com/test/apikeys"
+    },
     "AUTH_SECRET": { "required": true, "generate": { "bytes": 32 } },
     "NEXT_PUBLIC_POSTHOG_KEY": { "sensitive": false }
   }
@@ -143,27 +150,27 @@ arca is installed per project, so in a terminal you run it as `npx arca <command
 
 ## Profiles
 
-A profile is a set of values for the project's variables. Say you have `ontwikkel` and `acceptatie`: the same variables, a few different values. All profiles are equal. You switch between them freely.
+A profile is a set of values for the project's variables. Say you have `dev` and `staging`: the same variables, a few different values. All profiles are equal. You switch between them freely.
 
 ```json
 {
-  "defaultProfile": "ontwikkel",
+  "defaultProfile": "dev",
   "profiles": {
-    "ontwikkel": {},
-    "acceptatie": { "extends": "ontwikkel", "envFiles": [".env.acceptatie"] }
+    "dev": {},
+    "staging": { "extends": "dev", "envFiles": [".env.staging"] }
   }
 }
 ```
 
-- `extends` inherits every value the profile doesn't store itself, so `acceptatie` only stores what differs. Without it, seed a full copy with `npx arca profiles copy ontwikkel acceptatie`.
-- `envFiles` lists non-sensitive config that arca loads for that profile. Use names frameworks don't load themselves (`.env.acceptatie`, not `.env.production`).
-- Every value command takes `--profile` / `-p`: `npx arca set DATABASE_URL -p acceptatie`, `npx arca setup -p acceptatie`, `npx arca import .env.acceptatie -p acceptatie`.
+- `extends` inherits every value the profile doesn't store itself, so `staging` only stores what differs. Without it, seed a full copy with `npx arca profiles copy dev staging`.
+- `envFiles` lists non-sensitive config that arca loads for that profile. Use names frameworks don't load themselves (`.env.staging`, not `.env.production`).
+- Every value command takes `--profile` / `-p`: `npx arca set DATABASE_URL -p staging`, `npx arca setup -p staging`, `npx arca import .env.staging -p staging`.
 
 ```console
-$ npx arca use acceptatie
-✔ acme-web now uses profile acceptatie for every arca run on this machine
+$ npx arca use staging
+✔ acme-web now uses profile staging for every arca run on this machine
 $ npm run dev
-arca ▸ profile acceptatie (via arca use) · 3 secrets · output masked
+arca ▸ profile staging (via arca use) · 3 secrets · output masked
 $ npx arca use --reset
 ```
 
@@ -171,7 +178,7 @@ $ npx arca use --reset
 
 A profile only decides which values arca injects. It doesn't set `NODE_ENV` or change `next dev` into `next build`.
 
-Output is masked with the values of **every** profile, so an `acceptatie` connection string that shows up during an `ontwikkel` run still prints as `[arca:DATABASE_URL@acceptatie]`. `npx arca list` shows one column per profile, and `npx arca profiles diff ontwikkel acceptatie` shows which values a profile sets itself and which it inherits.
+Output is masked with the values of **every** profile, so a `staging` connection string that shows up during a `dev` run still prints as `[arca:DATABASE_URL@staging]`. `npx arca list` shows one column per profile, and `npx arca profiles diff dev staging` shows which values a profile sets itself and which it inherits.
 
 `arca init` offers each `.env.<name>` file as a profile. A project that had values before it declared profiles keeps them: they move to the default profile on the first run.
 
@@ -193,20 +200,22 @@ There's no store in CI, on Vercel or in Docker, so `arca run` just runs the comm
 
 ## Supported platforms
 
-| Platform | Status |
-|---|---|
-| Windows 10 and 11 | Supported. Tested in CI on every push |
-| Linux, including WSL | Supported. Tested in CI on every push, including against a real GNOME Keyring |
-| macOS | Not supported yet. arca may work, but it isn't tested there. `arca init` and `arca doctor` show a warning |
+| Platform             | Status                                                                                                    |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| Windows 10 and 11    | Supported. Tested in CI on every push                                                                     |
+| Linux, including WSL | Supported. Tested in CI on every push, including against a real GNOME Keyring                             |
+| macOS                | Not supported yet. arca may work, but it isn't tested there. `arca init` and `arca doctor` show a warning |
 
 CI tests Windows x64, Linux x64 and arm64, and Alpine (musl), with npm and pnpm. Node 24 or newer.
 
 ## Where things are kept
 
-| What | Where |
-|---|---|
-| Encrypted vaults | `%LOCALAPPDATA%\arca` (Windows), `~/.local/share/arca` or `$XDG_DATA_HOME/arca` (Linux). Override with `ARCA_HOME`. |
-| Master key | Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWallet). Where there's no persistent keychain (WSL, headless Linux, or a Secret Service that doesn't respond), arca uses a passphrase instead (`ARCA_KEYCHAIN=passphrase` forces it). You type it once: on Linux the unlocked key is then remembered in the kernel keyring for 12 hours, until a reboot at the latest. `ARCA_PASSPHRASE_CACHE=<hours>` changes that, `0` turns it off. `npx arca doctor` shows until when it's remembered. |
+| What             | Where                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Encrypted vaults | `%LOCALAPPDATA%\arca` (Windows), `~/.local/share/arca` or `$XDG_DATA_HOME/arca` (Linux). Override with `ARCA_HOME`.                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Master key       | Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWallet). Where there's no persistent keychain (WSL, headless Linux, or a Secret Service that doesn't respond), arca uses a passphrase instead (`ARCA_KEYCHAIN=passphrase` forces it). You type it once: on Linux the unlocked key is then remembered in the kernel keyring for 12 hours, until a reboot at the latest. `ARCA_PASSPHRASE_CACHE=<hours>` changes that, `0` turns it off. `npx arca doctor` shows until when it's remembered. |
+
+On WSL, run `npm install` from WSL, not Windows. A `node_modules` installed from Windows has only the Windows build of arca's keyring module. The passphrase still works, but arca can't remember it, so every run asks. arca and `npx arca doctor` both tell you when that happens.
 
 If the keychain entry is lost, the vaults can't be decrypted. For local development secrets that's usually fine, because they can be fetched again from their dashboards.
 

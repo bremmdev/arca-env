@@ -176,9 +176,11 @@ async function readPassphraseKey(store: Store, io: IO): Promise<Buffer | null> {
   if (!existsSync(file)) return null
   const text = readFileSync(file, 'utf8')
   const cached = await readCachedKey(store, io, text)
-  if (cached) return cached.key
+  if (cached && 'key' in cached) return cached.key
+  // Containers block the kernel keyring by design, so only a fixable cause gets a line on every run.
+  if (cached?.binding) io.stderr.write(`arca: the passphrase can't be remembered: ${cached.problem}.\n`)
   const key = unwrapMasterKey(JSON.parse(text) as WrappedKey, await getPassphrase(io, 'arca passphrase'))
-  await cacheKey(store, io, key, text)
+  if (!cached) await cacheKey(store, io, key, text)
   return key
 }
 
@@ -227,7 +229,25 @@ async function cacheEntry(store: Store, io: IO) {
 
 const fingerprint = (wrapped: string) => createHash('sha256').update(wrapped).digest('hex').slice(0, 16)
 
-async function readCachedKey(store: Store, io: IO, wrapped: string): Promise<{ key: Buffer; expires: number } | null> {
+/** Why the kernel keyring can't be used. `binding`: the native module is missing, which a reinstall fixes. */
+interface CacheProblem {
+  problem: string
+  binding: boolean
+}
+
+function cacheProblem(e: unknown): CacheProblem {
+  // osEntry throws an ArcaError only when @napi-rs/keyring has no build for this OS. The usual
+  // cause: node_modules was installed from Windows and the project is now run from WSL.
+  if (e instanceof ArcaError) {
+    return {
+      problem: "the Linux build of the keyring module isn't installed. This happens when node_modules was installed from Windows: run `npm install` again from WSL or Linux",
+      binding: true,
+    }
+  }
+  return { problem: `no usable kernel keyring (${(e as Error).message})`, binding: false }
+}
+
+async function readCachedKey(store: Store, io: IO, wrapped: string): Promise<{ key: Buffer; expires: number } | CacheProblem | null> {
   if (cacheMs(io) === 0) return null
   try {
     const raw = (await cacheEntry(store, io)).getPassword()
@@ -237,9 +257,9 @@ async function readCachedKey(store: Store, io: IO, wrapped: string): Promise<{ k
     if (c.file === fingerprint(wrapped) && Date.now() < c.expires && key.length === MASTER_KEY_BYTES) return { key, expires: c.expires }
     await forgetCachedKey(store, io)
     return null
-  } catch {
+  } catch (e) {
     // No usable kernel keyring (containers block it by default): just ask for the passphrase.
-    return null
+    return cacheProblem(e)
   }
 }
 
@@ -262,13 +282,15 @@ export async function forgetCachedKey(store: Store, io: IO): Promise<void> {
   }
 }
 
-/** For `doctor`: until when a typed passphrase is remembered, 'off', or null when nothing is cached. */
-export async function passphraseCacheStatus(store: Store, io: IO): Promise<number | 'off' | null> {
+/** For `doctor`: until when a typed passphrase is remembered, 'off', why it can't be, or null when nothing is cached. */
+export async function passphraseCacheStatus(store: Store, io: IO): Promise<number | 'off' | { problem: string } | null> {
   if (io.platform !== 'linux' || io.env.ARCA_PASSPHRASE) return null
   if (cacheMs(io) === 0) return 'off'
   const file = wrappedFile(store)
   if (!existsSync(file)) return null
-  return (await readCachedKey(store, io, readFileSync(file, 'utf8')))?.expires ?? null
+  const cached = await readCachedKey(store, io, readFileSync(file, 'utf8'))
+  if (!cached) return null
+  return 'key' in cached ? cached.expires : { problem: cached.problem }
 }
 
 async function getPassphrase(io: IO, message: string): Promise<string> {
