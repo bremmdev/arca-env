@@ -4,8 +4,11 @@
 // shim (.cmd on Windows), the console guard preloaded from node_modules, the native
 // keyring binding installing, and the package exports.
 //
-// Run with `npm run build && npm run smoke`. Set ARCA_SMOKE_KEEP=1 to keep the temp folder.
+// Run with `npm run build && npm run smoke`. `npm run smoke -- --pnpm` installs and runs it
+// with pnpm instead (symlinked node_modules, pnpm's own shims). Set ARCA_SMOKE_KEEP=1 to
+// keep the temp folder.
 
+import spawn from 'cross-spawn'
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -49,14 +52,31 @@ function npm(args, env, cwd = project) {
   return { code: r.status, stdout: r.stdout, out: r.stdout + r.stderr }
 }
 
-/** A developer's terminal: no agent markers, no npm/arca vars from whoever started this script. */
-async function cleanEnv(extra = {}) {
-  const { detectAgent } = await arcaApi()
+// The package manager under test, for installing the tarball and running arca.
+const pm = process.argv.includes('--pnpm') ? 'pnpm' : 'npm'
+function tool(args, env) {
+  if (pm === 'npm') return npm(args, env)
+  // cross-spawn finds pnpm.cmd on Windows without a shell.
+  const r = spawn.sync('pnpm', args, { cwd: project, env, encoding: 'utf8' })
+  if (r.error) throw r.error
+  return { code: r.status, stdout: r.stdout, out: r.stdout + r.stderr }
+}
+const exec = (args, env) => tool(pm === 'npm' ? ['exec', '--', ...args] : ['exec', ...args], env)
+
+/** process.env without the npm_* and arca_* vars of whoever started this script. */
+function ownEnv() {
   const env = {}
   for (const [k, v] of Object.entries(process.env)) {
     if (/^(npm_|arca_)/i.test(k)) continue
     env[k] = v
   }
+  return env
+}
+
+/** A developer's terminal: no agent markers, no npm/arca vars from whoever started this script. */
+async function cleanEnv(extra = {}) {
+  const { detectAgent } = await arcaApi()
+  const env = ownEnv()
   for (let a = detectAgent(env); a.detected; a = detectAgent(env)) delete env[a.via]
   return { ...env, NO_COLOR: '1', ARCA_HOME: join(root, 'store'), ARCA_KEYCHAIN: 'passphrase', ARCA_PASSPHRASE: PASSPHRASE, ...extra }
 }
@@ -99,7 +119,7 @@ try {
   })
   if (!tarball) throw new Error('no tarball, stopping')
 
-  await step('install the tarball into a project with a space in its path', () => {
+  await step(`${pm}: install the tarball into a project with a space in its path`, () => {
     mkdirSync(project)
     writeFileSync(
       join(project, 'package.json'),
@@ -107,13 +127,15 @@ try {
     )
     writeFileSync(join(project, 'arca.json'), JSON.stringify({ id: 'arc_smoketest', name: 'arca-smoke', vars: { API_KEY: { required: true } } }, null, 2))
     writeFileSync(join(project, 'app.js'), APP)
-    const r = npm(['install', '--save-dev', '--no-audit', '--no-fund', tarball], process.env)
-    check(r.code === 0, 'npm install failed', r.out)
+    const args = pm === 'npm' ? ['install', '--save-dev', '--no-audit', '--no-fund', tarball] : ['add', '--save-dev', tarball]
+    // pnpm reads npm_config_* as its own config, so it doesn't get the ones `npm run smoke` set.
+    const r = tool(args, pm === 'npm' ? process.env : ownEnv())
+    check(r.code === 0, `${pm} install failed`, r.out)
   })
 
-  await step('`npx arca --version` reports the package version', async () => {
-    const r = npm(['exec', '--', 'arca', '--version'], await cleanEnv())
-    check(r.code === 0 && r.out.trim() === version, `expected ${version}`, r.out)
+  await step(`\`${pm} exec arca --version\` reports the package version`, async () => {
+    const r = exec(['arca', '--version'], await cleanEnv())
+    check(r.code === 0 && r.stdout.trim() === version, `expected ${version}`, r.out)
   })
 
   await step('store a secret through the programmatic API (passphrase store)', async () => {
@@ -140,9 +162,9 @@ try {
     check(!out.includes(SECRET), 'arca set printed the secret', out)
   })
 
-  await step('`npm run dev` injects the secret and masks it everywhere', async () => {
-    const r = npm(['run', 'dev'], await cleanEnv())
-    check(r.code === 0, 'npm run dev failed', r.out)
+  await step(`\`${pm} run dev\` injects the secret and masks it everywhere`, async () => {
+    const r = tool(['run', 'dev'], await cleanEnv())
+    check(r.code === 0, `${pm} run dev failed`, r.out)
     check(r.out.includes('secret-ok=true'), 'the secret was not injected', r.out)
     for (const line of ['console: [arca:API_KEY]', 'stdout: [arca:API_KEY]', 'stderr: [arca:API_KEY]']) {
       check(r.out.includes(line), `expected "${line}"`, r.out)
@@ -157,29 +179,29 @@ try {
   })
 
   await step('an AI agent may run the package script, masked', async () => {
-    const r = npm(['run', 'dev'], await cleanEnv({ CLAUDECODE: '1' }))
+    const r = tool(['run', 'dev'], await cleanEnv({ CLAUDECODE: '1' }))
     check(r.code === 0 && r.out.includes('secret-ok=true'), 'the agent could not run the script', r.out)
     check(!r.out.includes(SECRET), 'the secret appeared in the output', r.out)
   })
 
-  await step('an AI agent is refused an ad-hoc `npx arca run`', async () => {
-    const r = npm(['exec', '--', 'arca', 'run', '--', 'node', 'app.js'], await cleanEnv({ CLAUDECODE: '1' }))
+  await step(`an AI agent is refused an ad-hoc \`${pm} exec arca run\``, async () => {
+    const r = exec(['arca', 'run', '--', 'node', 'app.js'], await cleanEnv({ CLAUDECODE: '1' }))
     check(r.code !== 0, 'the ad-hoc run was allowed', r.out)
     check(r.out.includes('AI agents can only use secrets through package.json scripts'), 'expected the agent refusal', r.out)
     check(!r.out.includes(SECRET), 'the secret appeared in the output', r.out)
   })
 
-  await step('`npx arca doctor` finds the passphrase store, names only', async () => {
-    const r = npm(['exec', '--', 'arca', 'doctor'], await cleanEnv())
+  await step(`\`${pm} exec arca doctor\` finds the passphrase store, names only`, async () => {
+    const r = exec(['arca', 'doctor'], await cleanEnv())
     check(r.out.includes('passphrase'), 'expected the passphrase key storage', r.out)
     check(!r.out.includes(SECRET), 'the secret appeared in the output', r.out)
   })
 
   await step('CI without a store: passes through and checks required variables', async () => {
     const env = await cleanEnv({ CI: 'true', ARCA_HOME: join(root, 'empty-store') })
-    const missing = npm(['run', 'dev'], env)
+    const missing = tool(['run', 'dev'], env)
     check(missing.code !== 0 && missing.out.includes('API_KEY'), 'expected a missing API_KEY error', missing.out)
-    const given = npm(['run', 'dev'], { ...env, API_KEY: SECRET })
+    const given = tool(['run', 'dev'], { ...env, API_KEY: SECRET })
     check(given.code === 0 && given.out.includes('secret-ok=true'), 'the platform value was not passed through', given.out)
   })
 } catch (e) {
@@ -194,4 +216,4 @@ if (failed) {
   console.log(`\n${failed} smoke step(s) failed`)
   process.exit(1)
 }
-console.log('\nsmoke test passed')
+console.log(`\nsmoke test passed (${pm})`)

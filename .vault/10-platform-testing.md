@@ -14,7 +14,7 @@
 | Console guard preload (`NODE_OPTIONS=--import=file:///…`) | Unit test for a `Program Files` path | Unit test | Not run from an installed package path |
 | Installed package (`npm pack` → `npm i` → `npx arca`) | By hand, in `examples/` | Never | Checks the `files` field, the bin shebang, `dist/guard.mjs` resolution and the native binding |
 | File permissions (`0o700` dir, `0o600` files) | n/a (per-user `%LOCALAPPDATA%`) | **Not asserted** | `atomicWrite` calls `chmodSync` |
-| musl (Alpine), arm64 | n/a | Never | Prebuilt bindings exist for both |
+| musl (Alpine), arm64 | n/a | ✅ CI jobs since 2026-11-03 | Prebuilt bindings exist for both |
 
 ## Gaps that worry me most
 
@@ -35,9 +35,11 @@ One workflow, two jobs. The filename stays `publish.yml` because npm trusted pub
 
 ```
 on: [push, pull_request]
-test:     matrix os [ubuntu-latest, windows-latest] × node [24, current]
-          npm ci → typecheck → test → build → smoke (layer 3)
-publish:  needs: test, only on push to main
+test:            matrix os [ubuntu-latest, windows-latest] × node [24, 26], plus ubuntu-24.04-arm × 24
+                 npm ci → typecheck → test → build → smoke (layer 3) → smoke with pnpm
+alpine:          docker run node:24-alpine: npm ci → typecheck → test → build → smoke
+keychain-linux:  real Secret Service (gnome-keyring under dbus-run-session)
+publish:         needs: test, alpine, keychain-linux, only on push to main
           version already on npm? skip : build → npm publish
 ```
 
@@ -47,8 +49,8 @@ publish:  needs: test, only on push to main
 - Superseded runs on branches are cancelled; runs on main never are, so a publish isn't cut off. The publish job has its own `publish` concurrency group, so two quick pushes can't publish at once.
 - A push to a branch with an open PR runs the tests twice (once for `push`, once for `pull_request`). Accepted for now.
 - Extra Linux jobs, each small:
-  - **`ubuntu-24.04-arm`**: arm64 binding (`linux-arm64-gnu`).
-  - **Alpine container** (`node:24-alpine`): musl binding, BusyBox userland. Passphrase mode only.
+  - ✅ **`ubuntu-24.04-arm`**: arm64 binding (`linux-arm64-gnu`). A matrix `include` on Node 24: the whole test job, smoke tests included.
+  - ✅ **`alpine`** (`node:24-alpine`): musl binding, BusyBox userland, passphrase mode only. Typecheck, tests, build and the npm smoke test inside a plain `docker run` (no JavaScript action has to run in Alpine). Publish needs it too. Passed locally in Docker first (112 tests).
   - ✅ **`keychain-linux`**: `ubuntu-latest` with `dbus` + `gnome-keyring`, tests run under `dbus-run-session` with an unlocked keyring (`echo pw | gnome-keyring-daemon --unlock --components=secrets`). Runs `keychain.test.ts` against the real Secret Service and `backend.test.ts` (auto-detection). Publish needs it too.
 - ✅ Windows: the real-keychain tests run in the `windows-latest` test jobs (`ARCA_TEST_OS_KEYCHAIN=1` on the Test step).
 - Skip `windows-11-arm` for now; add it if someone asks.
@@ -81,7 +83,7 @@ Rule for platform-specific tests: use `it.runIf(process.platform === 'linux')` e
 
 The script strips agent markers and `npm_*`/`ARCA_*` vars it inherited, so it gives the same result when run from Claude Code. `ARCA_SMOKE_KEEP=1` keeps the temp folder for inspection.
 
-Optional later: repeat steps 2–7 with `pnpm` (symlinked `node_modules`, different shims). Worth it before 1.0, not for the MVP.
+✅ `npm run smoke -- --pnpm` (2026-11-03) runs every step with pnpm instead: `pnpm add` of the tarball, `pnpm run dev`, `pnpm exec arca`. The package then sits behind a symlink (a junction on Windows) in `node_modules/.pnpm/@bremmdev+arca-env@file+…`, so the console guard is preloaded from a path with `+` and `@` in it. Runs in every test job after the npm smoke test, with pnpm 12 (pinned major). Passed on Windows and Linux before it went into CI. yarn isn't covered.
 
 ### Layer 5 (todo): framework coverage
 
@@ -137,5 +139,5 @@ Record anything found in [08](08-issue-log.md), as usual.
 5. ✅ `signals.test.ts` (2026-11-02). No bugs found; one surprise recorded (P7).
 6. ✅ First pass of the manual checklist (2026-11-02). WSL already had Node 24.15 (nvm); the suite and the smoke test pass there (110 tests). M4–M6 were driven through a real pseudo-terminal (a small Python `pty` driver), M5 in Docker. One fix: the locked-keyring message (P8). M1–M3 done 2026-11-03 (P9: the batch prompt is Volta's; P10 fixed). The whole checklist has had a first pass.
 7. ✅ README/doctor wording for macOS (2026-11-02): a "Supported platforms" section in the README; `arca init` and `arca doctor` warn on macOS without failing (tested); D11 in [06](06-roadmap.md).
-8. Later: arm64 and Alpine jobs, pnpm smoke test.
+8. ✅ arm64 and Alpine jobs, pnpm smoke test (2026-11-03). No bugs found.
 9. Todo: framework coverage job (layer 5), daily and on version bumps.

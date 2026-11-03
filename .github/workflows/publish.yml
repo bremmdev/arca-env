@@ -22,6 +22,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
         node: ["24", "26"] # "current" resolves to alpha builds; bump to the newest stable major
+        include:
+          - os: ubuntu-24.04-arm # arm64: its own keyring and bundler bindings
+            node: "24"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -41,6 +44,22 @@ jobs:
         run: npm run build
       - name: Smoke test (packed package in a temp project)
         run: npm run smoke
+      - name: Install pnpm
+        run: npm install -g pnpm@12 # pinned major: a new one is a deliberate bump
+      - name: Smoke test with pnpm (symlinked node_modules, pnpm's shims)
+        run: npm run smoke -- --pnpm
+
+  # musl and BusyBox. A plain `docker run`, so no JavaScript action has to run inside Alpine.
+  alpine:
+    name: test (alpine, node 24)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Typecheck, test, build and smoke test in node:24-alpine
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo node:24-alpine sh -c '
+            npm ci && npm run typecheck && npm test && npm run build && npm run smoke
+          '
 
   # The real Secret Service: a D-Bus session with an unlocked gnome-keyring.
   keychain-linux:
@@ -64,7 +83,7 @@ jobs:
 
   # A version bump on main is the release gate. Runs only when every test job passed.
   publish:
-    needs: [test, keychain-linux]
+    needs: [test, alpine, keychain-linux]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

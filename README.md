@@ -140,7 +140,7 @@ There's no store in CI, on Vercel or in Docker, so `arca run` just runs the comm
 | Linux, including WSL | Supported. Tested in CI on every push, including against a real GNOME Keyring |
 | macOS | Not supported yet. arca may work, but it isn't tested there. `arca init` and `arca doctor` show a warning |
 
-CI runs on x64 with glibc. The keychain binding also ships for arm64 and musl (Alpine), but those aren't tested yet. Node 24 or newer.
+CI tests Windows x64, Linux x64 and arm64, and Alpine (musl), with npm and pnpm. Node 24 or newer.
 
 ## Where things are kept
 
