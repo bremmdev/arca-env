@@ -10,7 +10,7 @@
 // ARCA_FRAMEWORKS_KEEP=1 keeps the temp folder.
 
 import { spawn, spawnSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -28,7 +28,9 @@ const PLAYWRIGHT = 'playwright-core@1.64.1'
 // Not `localhost`: it resolves to ::1 first on some Linux hosts and 127.0.0.1 on others.
 const HOST = '127.0.0.1'
 
-const root = mkdtempSync(join(tmpdir(), 'arca-frameworks-'))
+// The long form of the temp path: GitHub's Windows runners have TEMP=C:\Users\RUNNER~1\…, and
+// under an 8.3 short path Vite + TanStack Start serve 404 for /@vite/client, arca or not (P12).
+const root = mkdtempSync(join(realpathSync.native(tmpdir()), 'arca-frameworks-'))
 const store = join(root, 'store')
 let failed = 0
 
@@ -215,6 +217,7 @@ async function runFramework(name, spec, tarball, browser) {
 
     const page = await browser.newPage()
     page.on('console', (m) => consoleLogs.push(m.text()))
+    page.on('response', (r) => r.status() >= 400 && consoleLogs.push(`(HTTP ${r.status()} ${r.url()})`))
     await step(`${name}: the page renders with the secret injected`, async () => {
       await page.goto(url, { timeout: 120_000 })
       const text = await page.locator('#injected').textContent({ timeout: 60_000 })
@@ -231,7 +234,7 @@ async function runFramework(name, spec, tarball, browser) {
     })
     await step(`${name}: server logs in the browser console are masked`, async () => {
       await waitFor(() => consoleLogs.some(spec.browserLog.test), 30_000, `${spec.browserLog.what}, masked, in the browser console`).catch((e) => {
-        throw new Error(`${e.message}\n--- browser console ---\n${consoleLogs.join('\n').slice(-3000)}`)
+        throw new Error(`${e.message}\n--- browser console ---\n${consoleLogs.join('\n').slice(-3000)}\n--- dev server ---\n${dev.out.slice(-2000)}`)
       })
     })
     await spec.extra(app, dev)
