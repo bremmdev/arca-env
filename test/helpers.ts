@@ -34,7 +34,8 @@ export function cleanEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 
 export interface Answers {
   password?: (string | null)[]
-  confirm?: (boolean | null)[]
+  /** 'enter' takes the prompt's default. */
+  confirm?: (boolean | null | 'enter')[]
   text?: (string | null)[]
   multiselect?: (string[] | null)[]
 }
@@ -58,7 +59,10 @@ export function fakeIO(opts: { cwd: string; env: NodeJS.ProcessEnv; tty?: boolea
   const prompts: Prompts = {
     password: async (m) => next(a.password, 'password', m),
     text: async (m) => next(a.text, 'text', m),
-    confirm: async (m) => next(a.confirm, 'confirm', m),
+    confirm: async (m, initial = true) => {
+      const answer = next(a.confirm, 'confirm', m)
+      return answer === 'enter' ? initial : answer
+    },
     multiselect: async (m) => next(a.multiselect, 'multiselect', m) as never,
   }
   return {

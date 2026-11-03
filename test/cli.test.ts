@@ -193,6 +193,21 @@ describe('migrating a project with a mixed .env.local', () => {
       expect(r.io.err()).toContain('Updated DATABASE_URL')
     })
 
+    it('Enter at the typo question keeps the typed name', async () => {
+      const r = await h.human(['set', 'DATABSE_URL'], { answers: { confirm: ['enter', false], password: [DB] } })
+      expect(r.code).toBe(0)
+      expect(r.io.err()).toContain('Set DATABSE_URL')
+    })
+
+    it('a declared name plus a prefix or suffix is not a typo', async () => {
+      for (const name of ['DATABASE_URL2', 'NEXT_DATABASE_URL']) {
+        // The only confirm is "declare it?": a typo question would use it up and fail.
+        const r = await h.human(['set', name], { answers: { confirm: [false], password: [DB] } })
+        expect(r.code).toBe(0)
+        expect(r.io.err()).toContain(`Set ${name}`)
+      }
+    })
+
     it('refuses writes without a terminal, even without an agent marker', async () => {
       const r = await h.task(['set', 'X', 'y'])
       expect(r.code).toBe(1)

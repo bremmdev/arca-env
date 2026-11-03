@@ -112,12 +112,12 @@ Setup notes:
 
 | # | Where | Check |
 |---|---|---|
-| M1 | Windows Terminal + PowerShell | `npm run dev` in a real Next.js example; Ctrl+C stops it **once**, no "Terminate batch job (Y/N)?" loop, no orphan `node.exe` in Task Manager. (Killing arca and process-tree kills are automated now; only the console Ctrl+C is left.) |
-| M2 | cmd.exe and Git Bash | `npx arca`, `npx arca set` (masked prompt works), `npm run dev` |
-| M3 | Windows, VS Code integrated terminal + Claude Code | Agent runs `npm run dev` (allowed, masked), `npx arca reveal` (refused) |
-| M4 | WSL, fresh store | First `npx arca set` asks for a passphrase twice; later commands ask once; `ARCA_PASSPHRASE` skips it |
-| M5 | WSL with gnome-keyring, `ARCA_KEYCHAIN=os` | Key survives `wsl --shutdown` |
-| M6 | WSL | Ctrl+C on `npm run dev` in a real terminal. (`kill -TERM`/`-HUP`/`-INT` on the arca process is automated now.) |
+| M1 | Windows Terminal + PowerShell | `npm run dev` in a real Next.js example; Ctrl+C stops it **once**, no "Terminate batch job (Y/N)?" loop, no orphan `node.exe` in Task Manager. (Killing arca and process-tree kills are automated now; only the console Ctrl+C is left.) ✅ 2026-11-03: stops once, nothing left running. The "Terminate batch job" prompt does appear, but it comes from Volta's `npm.exe` shim and shows up without arca too (P9) |
+| M2 | cmd.exe and Git Bash | `npx arca`, `npx arca set` (masked prompt works), `npm run dev`. cmd.exe ✅ 2026-11-03: status shows "interactive terminal", `set` shows dots, `npm run dev` masked; Ctrl+C leaves nothing running and port 3123 free (the batch prompt is Volta's, P9). Git Bash ✅ 2026-11-03: same results; the arrow-key Yes/No prompt works. Found P10 (typo question defaulted to Yes) |
+| M3 | Windows, VS Code integrated terminal + Claude Code | Agent runs `npm run dev` (allowed, masked), `npx arca reveal` (refused). ✅ 2026-11-03: the agent started `npm run dev` in the background (acceptatie, 4 secrets, output masked); asked for `DATABASE_URL`, it first declined on its own (after reading arca's source); told to run `npx arca reveal DATABASE_URL`, arca refused with exit 1 ("secret values cannot be shown to AI agents (detected: claude-code via AI_AGENT)") and printed no part of the value |
+| M4 | WSL, fresh store | ✅ 2026-11-02, driven through a real PTY: a fresh store on WSL picks passphrase mode by itself; the first `npx arca set` hides the value, then asks for the passphrase twice; `npm run dev` asks once and runs masked; `ARCA_PASSPHRASE` skips it; a wrong passphrase stops with "arca: wrong passphrase."; nothing is ever echoed |
+| M5 | gnome-keyring, `ARCA_KEYCHAIN=os` | ✅ 2026-11-02, in Docker (WSL would need sudo for the packages): the key written in one D-Bus session is read back by a **new** session and a new keyring daemon, from `login.keyring` on disk, with the kernel keyring blocked. A locked keyring fails at once with an unlock hint (P8) |
+| M6 | WSL | ✅ 2026-11-02, real PTY Ctrl+C on `npm run dev`: SIGINT reaches the whole foreground group (npm, sh, arca, node); a child that handles it gets it **exactly once** (arca doesn't forward it again), its last output still appears, and nothing is left running, with or without a handler |
 
 Record anything found in [08](08-issue-log.md), as usual.
 
@@ -135,7 +135,7 @@ Record anything found in [08](08-issue-log.md), as usual.
 3. ✅ `backend.test.ts` + `keychain.test.ts` + the `keychain-linux` CI job (2026-11-02). The read-back doubt was real: see P3 in [08](08-issue-log.md).
 4. ✅ `spawn.test.ts` and `files.test.ts` (2026-11-02). Found and fixed P5 (Windows rename retry too short) and P6 (`export --output` kept an existing file world-readable).
 5. ✅ `signals.test.ts` (2026-11-02). No bugs found; one surprise recorded (P7).
-6. WSL setup and the first pass of the manual checklist.
+6. ✅ First pass of the manual checklist (2026-11-02). WSL already had Node 24.15 (nvm); the suite and the smoke test pass there (110 tests). M4–M6 were driven through a real pseudo-terminal (a small Python `pty` driver), M5 in Docker. One fix: the locked-keyring message (P8). M1–M3 done 2026-11-03 (P9: the batch prompt is Volta's; P10 fixed). The whole checklist has had a first pass.
 7. ✅ README/doctor wording for macOS (2026-11-02): a "Supported platforms" section in the README; `arca init` and `arca doctor` warn on macOS without failing (tested); D11 in [06](06-roadmap.md).
 8. Later: arm64 and Alpine jobs, pnpm smoke test.
 9. Todo: framework coverage job (layer 5), daily and on version bumps.

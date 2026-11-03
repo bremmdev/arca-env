@@ -504,10 +504,7 @@ Still open:
 
 - **Stores created by ≤ 0.2.1 in the kernel keyring.** Not rescued (see the end of [the bug](#the-linux-kernel-keyring-bug-fixed-2026-11-02)). Probably no real users. If one turns up: read the kernel keyring entry once, rewrap it with a passphrase, switch the store's backend.
 - **The error tip for a configured store.** When the OS keychain fails on a store whose `config.json` says `os`, the message suggests `ARCA_KEYCHAIN=passphrase`, but the recorded backend wins over that variable, so the tip doesn't help.
-- **A locked keyring in a non-interactive run.**
-  - The Secret Service store in the binding asks the provider to unlock locked items. On a desktop that's a dialog.
-  - Over SSH, or with automatic login before anything unlocked `login`, it's unknown whether `arca run` fails quickly or waits.
-  - This needs a test: lock the keyring (`seahorse` → Lock), then run `arca run` from a script.
+- ✅ **A locked keyring in a non-interactive run** (checked 2026-11-02 in Docker, P8). With no way to show an unlock dialog, `arca run` fails at once, no hang: "Secret Service: unlock prompt was dismissed". The message now says the keyring is locked and how to unlock it, instead of suggesting passphrase mode. On a desktop the provider shows its dialog instead (not checked by hand).
 - **Windows over SSH.** Not a bug, but worth a line in `doctor` or the docs: a key-based SSH session into Windows may not be able to read Credential Manager (error 1312).
 
 ---

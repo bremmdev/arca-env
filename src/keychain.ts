@@ -131,10 +131,12 @@ async function readOsKey(store: Store, io: IO): Promise<Buffer | null> {
     value = (await osKeyEntry(store, io)).getPassword()
   } catch (e) {
     if (e instanceof ArcaError) throw e
-    throw new ArcaError(
-      `arca: could not read the OS keychain (${(e as Error).message}).\n` +
-        'If this machine has no keychain, use passphrase mode: set ARCA_KEYCHAIN=passphrase.',
-    )
+    const message = (e as Error).message
+    // A locked keyring (SSH, automatic login) only needs unlocking; switching to passphrase mode wouldn't help.
+    const tip = /unlock|locked/i.test(message)
+      ? 'Your keyring is locked. Unlock it (log in to the desktop, or use Seahorse / KWalletManager) and run the command again.'
+      : 'If this machine has no keychain, use passphrase mode: set ARCA_KEYCHAIN=passphrase.'
+    throw new ArcaError(`arca: could not read the OS keychain (${message}).\n${tip}`)
   }
   if (!value) return null
   const key = Buffer.from(value, 'base64')

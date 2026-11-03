@@ -48,8 +48,12 @@ export async function setCommand(s: Session, opts: SetOptions): Promise<number> 
   const declared = project.config.vars
   if (!(name in declared)) {
     const guess = suggest(name, Object.keys(declared))
-    if (guess && s.io.stdinIsTTY) {
-      const yes = await s.io.prompts.confirm(`${name} isn't declared in arca.json. Did you mean ${guess}?`, true)
+    // TEST_KEY2 or NEXT_PUBLIC_TEST_KEY next to TEST_KEY is a new name on purpose, not a typo.
+    const upper = name.toUpperCase()
+    const extended = guess !== null && (upper.startsWith(guess.toUpperCase()) || upper.endsWith(guess.toUpperCase()))
+    if (guess && !extended && s.io.stdinIsTTY) {
+      // Enter keeps the typed name: taking the guess by accident would overwrite another secret.
+      const yes = await s.io.prompts.confirm(`${name} isn't declared in arca.json. Did you mean ${guess}?`, false)
       if (yes === null) throw new ArcaError('arca: cancelled.')
       if (yes) name = guess
     }
