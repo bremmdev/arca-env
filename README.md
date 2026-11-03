@@ -147,7 +147,7 @@ CI tests Windows x64, Linux x64 and arm64, and Alpine (musl), with npm and pnpm.
 | What | Where |
 |---|---|
 | Encrypted vaults | `%LOCALAPPDATA%\arca` (Windows), `~/.local/share/arca` or `$XDG_DATA_HOME/arca` (Linux). Override with `ARCA_HOME`. |
-| Master key | Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWallet). Where there's no persistent keychain (WSL, headless Linux, or a Secret Service that doesn't respond), arca uses a passphrase instead (`ARCA_KEYCHAIN=passphrase` forces it). |
+| Master key | Windows Credential Manager, or the Secret Service on Linux (GNOME Keyring, KWallet). Where there's no persistent keychain (WSL, headless Linux, or a Secret Service that doesn't respond), arca uses a passphrase instead (`ARCA_KEYCHAIN=passphrase` forces it). You type it once: on Linux the unlocked key is then remembered in the kernel keyring for 12 hours, until a reboot at the latest. `ARCA_PASSPHRASE_CACHE=<hours>` changes that, `0` turns it off. `npx arca doctor` shows until when it's remembered. |
 
 If the keychain entry is lost, the vaults can't be decrypted. For local development secrets that's usually fine, because they can be fetched again from their dashboards.
 

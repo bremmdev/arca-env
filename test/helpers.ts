@@ -29,7 +29,8 @@ export function cleanEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     if (drop.has(k) || k.startsWith('npm_') || k.startsWith('CLAUDE') || k.startsWith('CODEX')) continue
     env[k] = v
   }
-  return { ...env, ...extra }
+  // Tests never fill the user's real kernel keyring; passphrase-cache.test.ts turns it back on.
+  return { ...env, ARCA_PASSPHRASE_CACHE: '0', ...extra }
 }
 
 export interface Answers {

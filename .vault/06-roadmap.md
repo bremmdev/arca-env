@@ -78,7 +78,7 @@ Scope:
 - [x] `arca.json` loader + JSON Schema (shipped in the package), walk-up resolution
 - [x] **Profiles (D10):** resolution of `extends` and per-profile `envFiles`; selection (`--profile` > `ARCA_PROFILE` > `arca use` > `defaultProfile`); `arca use [profile] [--reset]` with `state.json`; banner with the selection source; `arca profiles` list/add/diff/copy/rm
 - [x] Store (paths, one vault file per profile, `policy.vault`, atomic writes, lock, one-deep backup), registry, ID collision warning
-- [ ] Crypto envelope (HKDF + AES-256-GCM) ✅, keychain adapter ✅, passphrase mode ✅ **without the keyutils cache** (O1)
+- [x] Crypto envelope (HKDF + AES-256-GCM), keychain adapter, passphrase mode with the keyutils cache (O1, 2026-11-03)
 - [x] Context detection: agent markers (vendored list + `AI_AGENT` + `ARCA_AGENT` + user markers), TTY, verified script, CI, nesting
 - [x] Policy engine implementing D2 and D4 ([03 §6](03-architecture.md#6-policy-engine)), human gate (TTY + no agent + challenge)
 - [x] Runner: cross-spawn, env merge `envFiles < shell < vault` with override notice (D5), passthrough + validation, signals, exit codes, **pipe mode with always-on masking** (D3), `FORCE_COLOR`/`COLUMNS` forwarding, console guard
@@ -126,7 +126,7 @@ Scope:
 - `arca reveal --copy` with clipboard auto-clear
 - Turbo `globalPassThroughEnv` integration in `init`
 - `arca backup` / restore bundles, and the `doctor` hint about backups
-- Passphrase-mode keyutils cache (O1), if it isn't done before Phase 2
+- ~~Passphrase-mode keyutils cache (O1)~~ done in Phase 1 (2026-11-03)
 - `arca init --undo`, and optional agent-tool deny rules from `init` (Claude Code `permissions.deny` for `arca reveal/export/set/import` and the store path)
 - CI on arm64 and Alpine (musl), and macOS if it becomes supported (D11)
 - Clear docs for VS Code / JetBrains / Cursor setups

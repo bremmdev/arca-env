@@ -174,9 +174,12 @@ function wrappedFile(store: Store): string {
 async function readPassphraseKey(store: Store, io: IO): Promise<Buffer | null> {
   const file = wrappedFile(store)
   if (!existsSync(file)) return null
-  const wrapped = JSON.parse(readFileSync(file, 'utf8')) as WrappedKey
-  const passphrase = await getPassphrase(io, 'arca passphrase')
-  return unwrapMasterKey(wrapped, passphrase)
+  const text = readFileSync(file, 'utf8')
+  const cached = await readCachedKey(store, io, text)
+  if (cached) return cached.key
+  const key = unwrapMasterKey(JSON.parse(text) as WrappedKey, await getPassphrase(io, 'arca passphrase'))
+  await cacheKey(store, io, key, text)
+  return key
 }
 
 async function writePassphraseKey(store: Store, io: IO, key: Buffer): Promise<void> {
@@ -188,7 +191,84 @@ async function writePassphraseKey(store: Store, io: IO, key: Buffer): Promise<vo
   }
   if (passphrase.length < 8) throw new ArcaError('arca: use a passphrase of at least 8 characters.')
   ensureDir(store.root)
-  atomicWrite(wrappedFile(store), JSON.stringify(wrapMasterKey(key, passphrase), null, 2) + '\n')
+  const text = JSON.stringify(wrapMasterKey(key, passphrase), null, 2) + '\n'
+  atomicWrite(wrappedFile(store), text)
+  await cacheKey(store, io, key, text)
+}
+
+// ── passphrase cache ─────────────────────────────────────────────────────
+// On Linux the unwrapped key is cached in the kernel keyring (keyutils), so the passphrase is
+// typed once per boot or day instead of on every run. That keyring is in memory and per user:
+// a reboot clears it. Fine for a cache, never for the only copy (see osKeyEntry). Like the OS
+// keychain, it's readable by any process of the same user.
+
+const DEFAULT_CACHE_HOURS = 12
+
+/** How long a typed passphrase is remembered, in ms. 0 when the cache is off. */
+function cacheMs(io: IO): number {
+  // ARCA_PASSPHRASE needs no prompt, so there's nothing to remember.
+  if (io.platform !== 'linux' || io.env.ARCA_PASSPHRASE) return 0
+  const raw = io.env.ARCA_PASSPHRASE_CACHE
+  const hours = raw === undefined || raw.trim() === '' || !Number.isFinite(Number(raw)) ? DEFAULT_CACHE_HOURS : Math.max(0, Number(raw))
+  return hours * 60 * 60 * 1000
+}
+
+interface CachedKey {
+  key: string
+  expires: number
+  /** Fingerprint of master.key.enc: a re-created store never gets an old key. */
+  file: string
+}
+
+async function cacheEntry(store: Store, io: IO) {
+  const Entry = await osEntry()
+  return new Entry(SERVICE, `${keychainAccount(store, io)}/passphrase-cache`, { linux: { store: 'keyutils' } })
+}
+
+const fingerprint = (wrapped: string) => createHash('sha256').update(wrapped).digest('hex').slice(0, 16)
+
+async function readCachedKey(store: Store, io: IO, wrapped: string): Promise<{ key: Buffer; expires: number } | null> {
+  if (cacheMs(io) === 0) return null
+  try {
+    const raw = (await cacheEntry(store, io)).getPassword()
+    if (!raw) return null
+    const c = JSON.parse(raw) as CachedKey
+    const key = Buffer.from(c.key, 'base64')
+    if (c.file === fingerprint(wrapped) && Date.now() < c.expires && key.length === MASTER_KEY_BYTES) return { key, expires: c.expires }
+    await forgetCachedKey(store, io)
+    return null
+  } catch {
+    // No usable kernel keyring (containers block it by default): just ask for the passphrase.
+    return null
+  }
+}
+
+async function cacheKey(store: Store, io: IO, key: Buffer, wrapped: string): Promise<void> {
+  const ms = cacheMs(io)
+  if (ms === 0) return
+  const value: CachedKey = { key: key.toString('base64'), expires: Date.now() + ms, file: fingerprint(wrapped) }
+  try {
+    ;(await cacheEntry(store, io)).setPassword(JSON.stringify(value))
+  } catch {
+    // Same as above: without a kernel keyring, every run asks.
+  }
+}
+
+export async function forgetCachedKey(store: Store, io: IO): Promise<void> {
+  try {
+    ;(await cacheEntry(store, io)).deletePassword()
+  } catch {
+    // nothing cached, or no kernel keyring
+  }
+}
+
+/** For `doctor`: until when a typed passphrase is remembered, 'off', or null when nothing is cached. */
+export async function passphraseCacheStatus(store: Store, io: IO): Promise<number | 'off' | null> {
+  if (io.platform !== 'linux' || io.env.ARCA_PASSPHRASE) return null
+  if (cacheMs(io) === 0) return 'off'
+  const file = wrappedFile(store)
+  if (!existsSync(file)) return null
+  return (await readCachedKey(store, io, readFileSync(file, 'utf8')))?.expires ?? null
 }
 
 async function getPassphrase(io: IO, message: string): Promise<string> {

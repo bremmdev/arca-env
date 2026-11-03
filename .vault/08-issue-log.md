@@ -80,7 +80,7 @@ The `examples/` folder mentioned below (`examples/next`, `examples/tanstack-star
 
 | # | Problem | Status |
 |---|---|---|
-| O1 | Passphrase mode (WSL, headless Linux) asks for the passphrase on **every** run unless `ARCA_PASSPHRASE` is set. The planned keyutils cache isn't built. | ⏳ |
+| O1 | Passphrase mode (WSL, headless Linux) asks for the passphrase on **every** run unless `ARCA_PASSPHRASE` is set. The planned keyutils cache isn't built. | ✅ 2026-11-03: cached in the kernel keyring for 12 h (`ARCA_PASSPHRASE_CACHE`), see [03](03-architecture.md). `passphrase-cache.test.ts` (8 tests on Linux with a kernel keyring, plus containers and Windows) and a real-terminal run in WSL: the first `set` is remembered, a new terminal asks nothing, `doctor` shows the expiry. |
 | O2 | Ctrl+C on `npm run dev` in a real terminal: does any `node.exe` stay behind? | ⏳ needs you. Narrowed 2026-11-02: killing arca alone or its process tree is tested on Windows and leaves nothing behind (P7). Only the console Ctrl+C itself is left to check by hand. |
 | O3 | Colours, Vite shortcuts and interactive prompts through the masking pipe (spike S2) | ⏳ needs you |
 | O4 | The human prompts (`init`, `set`, `setup`) in a real terminal. Validation simulated them. | ⏳ needs you. Narrowed 2026-11-02: `set` and the passphrase prompts were driven through a real PTY on WSL (M4) and work. `init` and `setup` prompts still unchecked. |

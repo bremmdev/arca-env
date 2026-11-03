@@ -3,7 +3,7 @@ import { join, relative, resolve } from 'node:path'
 import { DEFAULT_PROFILE, isSensitive } from '../config.js'
 import { isTemplateFile, loadEnvFiles } from '../envfiles.js'
 import { ArcaError } from '../errors.js'
-import { chooseBackend, loadMasterKey } from '../keychain.js'
+import { chooseBackend, loadMasterKey, passphraseCacheStatus } from '../keychain.js'
 import { scanEnvFiles, type Finding } from '../leakguard.js'
 import { unsupportedPlatformMessage } from '../messages.js'
 import { humanGate } from '../policy.js'
@@ -242,6 +242,11 @@ export async function doctorCommand(s: Session): Promise<number> {
   } catch (e) {
     bad((e as Error).message.replace(/^arca: /, ''))
     problems++
+  }
+  if (backend === 'passphrase') {
+    const cache = await passphraseCacheStatus(s.store, s.io)
+    if (cache === 'off') info('Passphrase cache: off (ARCA_PASSPHRASE_CACHE=0), so every run asks')
+    else if (typeof cache === 'number') info(`Passphrase remembered until ${new Date(cache).toLocaleString()} (kernel keyring, cleared on reboot)`)
   }
 
   if (!s.project) {
