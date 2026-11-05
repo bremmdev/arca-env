@@ -109,7 +109,9 @@ Teammates do the same with their own `.env.local`, or pull the commit and run `n
 
 ## Commands
 
-arca is installed per project, so in a terminal you run it as `npx arca <command>`. A bare `arca` gives "command not found", because `node_modules/.bin` isn't on your PATH. Inside `package.json` scripts, plain `arca run -- …` works, because npm adds that folder for scripts. For a bare `arca` everywhere, also install it globally: `npm i -g @bremmdev/arca-env`.
+arca is installed per project, so in a terminal you run it through your package manager: `npx arca <command>` with npm, `pnpm arca`, `yarn arca` (also under Plug'n'Play, where `npx arca` doesn't work) or `bun arca`. arca's own hints use the form your project needs. A bare `arca` gives "command not found", because `node_modules/.bin` isn't on your PATH. Inside `package.json` scripts, plain `arca run -- …` works, because the package manager adds that folder for scripts. For a bare `arca` everywhere, also install it globally: `npm i -g @bremmdev/arca-env`.
+
+Install arca before you run `npx arca`. Without a local install, `npx arca` fetches `arca` from npm, which is an unrelated package. The package name, `npx @bremmdev/arca-env <command>`, always gets the right one.
 
 | Command                                                                         | What it does                                                                                  | AI agents                              |
 | ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------- |
@@ -215,7 +217,7 @@ There's no store in CI, on Vercel or in Docker, so `arca run` just runs the comm
 | Linux, including WSL | Supported. Tested in CI on every push, including against a real GNOME Keyring                             |
 | macOS                | Not supported yet. arca may work, but it isn't tested there. `arca init` and `arca doctor` show a warning |
 
-CI tests Windows x64, Linux x64 and arm64, and Alpine (musl), with npm and pnpm. Node 24 or newer.
+CI tests Windows x64, Linux x64 and arm64, and Alpine (musl), with npm, pnpm, yarn (1 and 4) and bun. Node 24 or newer.
 
 ## Where things are kept
 

@@ -12,6 +12,7 @@ import { gitRemote, type ResolvedVar, type Session } from '../session.js'
 import type { AgentRunPolicy, VaultData } from '../store.js'
 import { pad, type Paint, type Style } from '../style.js'
 import { plural, shortDate } from '../util.js'
+import { arca, runScript } from '../hint.js'
 import { KNOWN_TOOLS, firstCommand } from './init.js'
 
 // Commands agents may use: they print names, never values.
@@ -78,7 +79,7 @@ export async function listCommand(s: Session): Promise<number> {
   }
   const p = s.out
   if (list.length === 0) {
-    s.print(`No variables declared or stored for ${s.forWhom()} yet. Declare them in arca.json, then run \`npx arca setup${s.profileFlag()}\`.`)
+    s.print(`No variables declared or stored for ${s.forWhom()} yet. Declare them in arca.json, then run \`${arca()} setup${s.profileFlag()}\`.`)
     return 0
   }
   // Several profiles and none picked explicitly: one column per profile.
@@ -125,7 +126,7 @@ async function listMatrix(s: Session): Promise<number> {
     const declared = [...tables.values()].some((t) => t.get(name)?.declared)
     s.print(`${pad(name, w)}${cells.join('')}${declared ? '' : p('dim', '(undeclared)')}`.trimEnd())
   }
-  s.print(p('dim', `\n● active profile: ${s.profile}${activeWhy(s)}. Switch with \`npx arca use <profile>\`.`))
+  s.print(p('dim', `\n● active profile: ${s.profile}${activeWhy(s)}. Switch with \`${arca()} use <profile>\`.`))
   return 0
 }
 
@@ -193,13 +194,13 @@ export async function checkCommand(s: Session, opts: { strict?: boolean; allProf
       if (r.missing.length === 0) s.print(`${p('green', '✔')} All ${plural(r.required, 'required variable')} set for ${who}`)
       else {
         s.print(`${p('red', '✖')} ${plural(r.missing.length, 'required variable')} missing for ${who}: ${r.missing.join(', ')}`)
-        s.print(`  Run \`npx arca setup${s.profileFlag(r.profile)}\` to set them. (AI agents: ask the user to run it.)`)
+        s.print(`  Run \`${arca()} setup${s.profileFlag(r.profile)}\` to set them. (AI agents: ask the user to run it.)`)
       }
-      for (const n of r.misplaced) s.print(`${p('yellow', '⚠')} ${n} is a secret but comes from a .env file. Move it: npx arca import --only ${n} --delete${s.profileFlag(r.profile)}`)
+      for (const n of r.misplaced) s.print(`${p('yellow', '⚠')} ${n} is a secret but comes from a .env file. Move it: ${arca()} import --only ${n} --delete${s.profileFlag(r.profile)}`)
       if (r.undeclared.length) s.print(p('dim', `  stored but not declared in arca.json: ${r.undeclared.join(', ')}`))
     }
     if (findings.length) {
-      s.print(`${p('yellow', '⚠')} Leak guard: ${plural(findings.length, 'possible secret')} in .env files (run \`npx arca doctor\` for details)`)
+      s.print(`${p('yellow', '⚠')} Leak guard: ${plural(findings.length, 'possible secret')} in .env files (run \`${arca()} doctor\` for details)`)
     }
   }
   if (missingAny) return 1
@@ -238,7 +239,7 @@ export async function doctorCommand(s: Session): Promise<number> {
     else if (s.store.hasAnyVault()) {
       bad('Master key missing, but vaults exist. They cannot be decrypted.')
       problems++
-    } else info('No master key yet (created on the first `npx arca set`)')
+    } else info(`No master key yet (created on the first \`${arca()} set\`)`)
   } catch (e) {
     bad((e as Error).message.replace(/^arca: /, ''))
     problems++
@@ -252,7 +253,7 @@ export async function doctorCommand(s: Session): Promise<number> {
 
   if (!s.project) {
     s.print(p('bold', '\nProject'))
-    info('No arca.json here or in any parent folder. Run `npx arca init`.')
+    info(`No arca.json here or in any parent folder. Run \`${arca()} init\`.`)
     return problems ? 1 : 0
   }
   const project = s.project
@@ -263,7 +264,7 @@ export async function doctorCommand(s: Session): Promise<number> {
   const reg = s.store.readRegistry()[project.config.id]
   const remote = gitRemote(project.root)
   if (reg?.gitRemote && remote && reg.gitRemote !== remote) {
-    warn(`The ID is also used by ${reg.roots[0]} (git remote ${reg.gitRemote}). If these are different projects: npx arca init --new-id`)
+    warn(`The ID is also used by ${reg.roots[0]} (git remote ${reg.gitRemote}). If these are different projects: ${arca()} init --new-id`)
     problems++
   }
 
@@ -276,7 +277,7 @@ export async function doctorCommand(s: Session): Promise<number> {
     if (!s.hasVault(profile)) {
       info(`${label}no secrets stored on this machine yet`)
       const missing = Object.entries(decls).filter(([, d]) => d.required && isSensitive(d)).map(([n]) => n)
-      if (missing.length) warn(`${label}required secrets not stored: ${missing.join(', ')}. Run \`npx arca setup${s.profileFlag(profile)}\`.`)
+      if (missing.length) warn(`${label}required secrets not stored: ${missing.join(', ')}. Run \`${arca()} setup${s.profileFlag(profile)}\`.`)
       continue
     }
     if (!master) continue
@@ -288,7 +289,7 @@ export async function doctorCommand(s: Session): Promise<number> {
     const short = [...values].filter(([n, v]) => v.profile === profile && isSensitive(decls[n]) && v.value.length < MIN_NEEDLE_LENGTH)
     for (const [n] of short) warn(`${label}${n} is shorter than ${MIN_NEEDLE_LENGTH} characters, so it isn't masked in output`)
     const missing = Object.entries(decls).filter(([n, d]) => d.required && isSensitive(d) && !values.has(n)).map(([n]) => n)
-    if (missing.length) warn(`${label}required secrets not stored: ${missing.join(', ')}. Run \`npx arca setup${s.profileFlag(profile)}\`.`)
+    if (missing.length) warn(`${label}required secrets not stored: ${missing.join(', ')}. Run \`${arca()} setup${s.profileFlag(profile)}\`.`)
   }
 
   // package.json scripts
@@ -301,7 +302,7 @@ export async function doctorCommand(s: Session): Promise<number> {
       .filter(([k, v]) => k !== 'start' && !/\barca\s+run\b/.test(v) && KNOWN_TOOLS.has(firstCommand(v) ?? ''))
       .map(([k]) => k)
     if (wrapped.length) ok(`Wrapped with arca run: ${wrapped.join(', ')}`)
-    else warn('No scripts use `arca run` yet, so nothing gets secrets. Run `npx arca init` to wrap them.')
+    else warn(`No scripts use \`arca run\` yet, so nothing gets secrets. Run \`${arca()} init\` to wrap them.`)
     if (unwrapped.length) info(`Not wrapped (no secrets): ${unwrapped.join(', ')}`)
   }
 
@@ -349,9 +350,9 @@ export async function doctorCommand(s: Session): Promise<number> {
 }
 
 function fixFor(f: Finding): string {
-  if (f.rule === 'stored') return `fix: delete the line from ${f.file}, or run: npx arca import ${f.file} --only ${f.key} --delete`
-  if (f.rule === 'declared') return `fix: npx arca import ${f.file} --only ${f.key} --delete   (or declare it "sensitive": false if it's config)`
-  return `fix: npx arca import ${f.file} --only ${f.key} --delete   (or, if it's not secret, declare it "sensitive": false or add it to leakGuard.ignore)`
+  if (f.rule === 'stored') return `fix: delete the line from ${f.file}, or run: ${arca()} import ${f.file} --only ${f.key} --delete`
+  if (f.rule === 'declared') return `fix: ${arca()} import ${f.file} --only ${f.key} --delete   (or declare it "sensitive": false if it's config)`
+  return `fix: ${arca()} import ${f.file} --only ${f.key} --delete   (or, if it's not secret, declare it "sensitive": false or add it to leakGuard.ignore)`
 }
 
 function osKeychainName(platform: NodeJS.Platform): string {
@@ -366,8 +367,8 @@ export async function statusCommand(s: Session, version: string): Promise<number
   const p = s.out
   s.print(`${p('bold', 'arca')} ${version}: secrets out of your .env files, masked in all output`)
   if (!s.project) {
-    s.print('\nNo arca.json in this folder or any parent. Get started:  npx arca init')
-    s.print('Commands:  npx arca help')
+    s.print(`\nNo arca.json in this folder or any parent. Get started:  ${arca()} init`)
+    s.print(`Commands:  ${arca()} help`)
     return 0
   }
   s.warnConfig()
@@ -382,7 +383,7 @@ export async function statusCommand(s: Session, version: string): Promise<number
   s.print(`Agents    ${policy.agentRun === 'scripts' ? 'package scripts only, output masked' : 'denied'}`)
   s.print(`You       ${s.ctx.agent.detected ? `AI agent (${s.ctx.agent.name} via ${s.ctx.agent.via})` : s.ctx.interactiveOutput ? 'interactive terminal' : 'non-interactive'}`)
   s.print(`Store     ${s.store.root}`)
-  s.print(`\n${missing.length ? `Next: npx arca setup${s.profileFlag()}` :'Run your app as usual, e.g. npm run dev'}    ·    npx arca help`)
+  s.print(`\n${missing.length ? `Next: ${arca()} setup${s.profileFlag()}` : `Run your app as usual, e.g. ${runScript('dev')}`}    ·    ${arca()} help`)
   return 0
 }
 
@@ -398,9 +399,9 @@ export async function policyCommand(s: Session, args: string[]): Promise<number>
     return 0
   }
   if (action !== 'set' || key !== 'agent-run' || (value !== 'scripts' && value !== 'deny')) {
-    throw new ArcaError('arca: usage: npx arca policy [show]  |  npx arca policy set agent-run <scripts|deny>', 2)
+    throw new ArcaError(`arca: usage: ${arca()} policy [show]  |  ${arca()} policy set agent-run <scripts|deny>`, 2)
   }
-  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca policy set agent-run ${value}` })
+  await humanGate(s.io, s.ctx, { kind: 'write', command: `${arca()} policy set agent-run ${value}` })
   const master = await s.masterKey(true)
   s.store.writePolicy(master, project.config.id, { agentRun: value as AgentRunPolicy })
   s.note(`${s.err('green', '✔')} agent-run is now ${value} for ${project.config.name}`)
@@ -424,8 +425,8 @@ export async function projectsCommand(s: Session, args: string[]): Promise<numbe
     }
     return 0
   }
-  if (action !== 'rm' || !id) throw new ArcaError('arca: usage: npx arca projects [list]  |  npx arca projects rm <id>', 2)
-  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca projects rm ${id}` })
+  if (action !== 'rm' || !id) throw new ArcaError(`arca: usage: ${arca()} projects [list]  |  ${arca()} projects rm <id>`, 2)
+  await humanGate(s.io, s.ctx, { kind: 'write', command: `${arca()} projects rm ${id}` })
   if (!reg[id] && !s.store.projectIds().includes(id)) throw new ArcaError(`arca: no project ${id} on this machine.`)
   const yes = await s.io.prompts.confirm(`Delete all secrets of ${reg[id]?.name ?? id} on this machine? This can't be undone.`, false)
   if (!yes) throw new ArcaError('arca: cancelled.')

@@ -10,6 +10,7 @@ import { agentsSnippet, unsupportedPlatformMessage } from '../messages.js'
 import { humanGate } from '../policy.js'
 import { Session } from '../session.js'
 import { plural } from '../util.js'
+import { addDevCommand, arca } from '../hint.js'
 import { storeValue } from './values.js'
 
 export const KNOWN_TOOLS = new Set([
@@ -117,7 +118,7 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
   let secretKeys: string[] = []
   const config = parseProject(readFileSync(configFile, 'utf8'), configFile).config
   if (merged.size === 0) {
-    step('No .env files with values found. Secrets go in arca (`npx arca set NAME`), non-sensitive config can stay in .env.')
+    step(`No .env files with values found. Secrets go in arca (\`${arca()} set NAME\`), non-sensitive config can stay in .env.`)
   } else {
     step(`Found ${devFiles.map((f) => `${f.name} (${plural(f.entries.length, 'var')})`).join(', ')}`)
     const keys = [...merged.keys()]
@@ -157,7 +158,7 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
   const profileImports = plans.filter((p) => p.store.size > 0)
   if ((secretKeys.length || profileImports.length) && opts.import !== false) {
     try {
-      await humanGate(io, session.ctx, { kind: 'write', command: 'npx arca import' })
+      await humanGate(io, session.ctx, { kind: 'write', command: `${arca()} import` })
       const hadKey = session.store.readGlobalConfig().keychain !== undefined
       if (secretKeys.length) {
         const vault = await session.readVault()
@@ -183,8 +184,8 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
       ok('Your .env files were not changed')
     } catch (e) {
       if (!(e instanceof ArcaError)) throw e
-      s.note(`${s.err('yellow', '✋')} Moving secret values into arca needs a human. Ask the user to run:  npx arca import`)
-      for (const p of profileImports) s.note(`   and:  npx arca import ${p.file.name} --profile ${p.name}`)
+      s.note(`${s.err('yellow', '✋')} Moving secret values into arca needs a human. Ask the user to run:  ${arca()} import`)
+      for (const p of profileImports) s.note(`   and:  ${arca()} import ${p.file.name} --profile ${p.name}`)
       s.note('   (the .env files stay untouched)')
     }
   }
@@ -265,18 +266,18 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
 
   // 6. Next steps
   const deps = { ...pkg?.dependencies, ...pkg?.devDependencies }
-  if (pkg && !deps['@bremmdev/arca-env']) s.note(`\nInstall arca in this project:  npm i -D @bremmdev/arca-env`)
+  if (pkg && !deps['@bremmdev/arca-env']) s.note(`\nInstall arca in this project:  ${addDevCommand('@bremmdev/arca-env')}`)
   if (imported) {
     const withSecrets = plans.filter((p) => p.secrets.size > 0)
     const files = [...(secretKeys.length ? devFiles.map((f) => f.name) : []), ...withSecrets.map((p) => p.file.name)]
     s.note('\n' + s.err('yellow', `⚠ The ${plural(imported, 'secret')} still have plaintext copies in ${files.join(', ')}.`))
     s.note('  Remove just those entries (config lines stay):')
-    if (secretKeys.length) s.note('    npx arca import --delete')
-    for (const p of withSecrets) s.note(`    npx arca import ${p.file.name} --profile ${p.name} --delete`)
+    if (secretKeys.length) s.note(`    ${arca()} import --delete`)
+    for (const p of withSecrets) s.note(`    ${arca()} import ${p.file.name} --profile ${p.name} --delete`)
   } else if (!secretKeys.length) {
-    s.note('\nNext: npx arca set DATABASE_URL   or   npx arca setup')
+    s.note(`\nNext: ${arca()} set DATABASE_URL   or   ${arca()} setup`)
   }
-  if (plans.length) s.note(`\nSwitch profiles with  npx arca use ${plans[0]!.name}  (and back with  npx arca use --reset)`)
+  if (plans.length) s.note(`\nSwitch profiles with  ${arca()} use ${plans[0]!.name}  (and back with  ${arca()} use --reset)`)
   return 0
 }
 

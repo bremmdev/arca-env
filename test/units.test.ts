@@ -7,6 +7,7 @@ import { arcaRunCommands, detectAgent, verifyScript } from '../src/context.js'
 import { newMasterKey, open, seal, unwrapMasterKey, vaultKey, wrapMasterKey } from '../src/crypto.js'
 import { parseEnv, removeEntries } from '../src/envfiles.js'
 import { scanEnvFiles, secretReason } from '../src/leakguard.js'
+import { addDevCommand, arca, detectPackageManager, installCommand, runScript, setPackageManager } from '../src/hint.js'
 import { decideRun, humanGate } from '../src/policy.js'
 import { Store } from '../src/store.js'
 import { cleanEnv, fakeIO, tempDir } from './helpers.js'
@@ -114,6 +115,18 @@ describe('script verification', () => {
     expect(verifyScript(io('dev', 'arca run -- next dev'), ['node', '-e', 'x'])).toMatchObject({ verified: false })
     expect(verifyScript(io('plain', 'next dev'), ['next', 'dev'])).toMatchObject({ verified: false })
     expect(verifyScript(io('nope', 'arca run -- x'), ['x'])).toEqual({ kind: 'adhoc' })
+  })
+
+  // Seen 2026-11-05: yarn 1.22 and bun 1.3 set both vars like npm. Yarn 4 sets only the event.
+  it('reads the script from package.json when only npm_lifecycle_event is set (yarn 2+)', () => {
+    const berry = (event: string) => fakeIO({ cwd: dir, env: { npm_lifecycle_event: event } })
+    expect(verifyScript(berry('dev'), ['next', 'dev', '--port', '3001'])).toMatchObject({ kind: 'script', verified: true })
+    expect(verifyScript(berry('both'), ['node', 'server.js'])).toMatchObject({ verified: true })
+    expect(verifyScript(berry('dev'), ['printenv'])).toMatchObject({ verified: false })
+    expect(verifyScript(berry('plain'), ['next', 'dev'])).toMatchObject({ verified: false })
+    // `yarn <bin>` (yarn 1) and `bunx` name something that isn't a script.
+    expect(verifyScript(berry('arca'), ['next', 'dev'])).toEqual({ kind: 'adhoc' })
+    expect(verifyScript(io('bunx', 'arca run -- next dev'), ['next', 'dev'])).toEqual({ kind: 'adhoc' })
   })
 })
 
@@ -251,11 +264,10 @@ describe('init: why scripts stay unwrapped', async () => {
 
 describe('init: AGENTS.md section updates', () => {
   it('replaces an outdated arca section and keeps what comes after it', async () => {
-    const { mkdtempSync, writeFileSync: write, readFileSync: read } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
+    const { writeFileSync: write, readFileSync: read } = await import('node:fs')
     const { join: j } = await import('node:path')
-    const { harness } = await import('./helpers.js')
-    const dir = mkdtempSync(j(tmpdir(), 'arca-agents-'))
+    const { harness, tempDir } = await import('./helpers.js')
+    const dir = tempDir('arca-agents-')
     write(j(dir, 'arca.json'), JSON.stringify({ id: 'arc_agentsupdateaaaaa', name: 'x' }))
     const before = '# Agent instructions\n\n## Secrets (arca)\n\nOld text from an earlier arca.\n\n<!-- BEGIN:nextjs-agent-rules -->\nNext rules\n<!-- END:nextjs-agent-rules -->\n'
     write(j(dir, 'AGENTS.md'), before)
@@ -271,5 +283,54 @@ describe('init: AGENTS.md section updates', () => {
     // A second run leaves the current section alone.
     const again = await h.task(['init'])
     expect(again.io.err()).not.toContain('Updated the "Secrets (arca)" section')
+  })
+})
+
+describe('package manager hints', () => {
+  function project(files: Record<string, string>): string {
+    const root = tempDir('arca-pm-')
+    for (const [name, text] of Object.entries(files)) {
+      mkdirSync(join(root, name, '..'), { recursive: true })
+      writeFileSync(join(root, name), text)
+    }
+    return root
+  }
+
+  it('detects the package manager from packageManager, then the lockfile', () => {
+    expect(detectPackageManager(project({ 'package.json': '{"packageManager":"yarn@4.18.1"}', 'package-lock.json': '{}' }), {})).toBe('yarn')
+    expect(detectPackageManager(project({ 'package.json': '{}', 'pnpm-lock.yaml': '' }), {})).toBe('pnpm')
+    expect(detectPackageManager(project({ 'package.json': '{}', 'bun.lock': '' }), {})).toBe('bun')
+    expect(detectPackageManager(project({ 'package.json': '{}', '.pnp.cjs': '' }), {})).toBe('yarn')
+    expect(detectPackageManager(project({ 'package.json': '{}', 'package-lock.json': '{}' }), { npm_config_user_agent: 'pnpm/10.2.0 npm/? node/v24.1.0' })).toBe('npm')
+  })
+
+  it("finds a workspace root's lockfile from a package, but stops at the repo root", () => {
+    const mono = project({ 'package.json': '{"workspaces":["apps/*"]}', 'yarn.lock': '', 'apps/web/package.json': '{}' })
+    expect(detectPackageManager(join(mono, 'apps/web'), {})).toBe('yarn')
+    const nested = project({ 'pnpm-lock.yaml': '', 'repo/.git/HEAD': '', 'repo/package.json': '{}' })
+    expect(detectPackageManager(join(nested, 'repo'), {})).toBe('npm')
+    const ws = project({ 'pnpm-lock.yaml': '', 'repo/package.json': '{"workspaces":[]}' })
+    expect(detectPackageManager(join(ws, 'repo'), {})).toBe('npm')
+  })
+
+  it('falls back to the package manager running arca, then npm', () => {
+    const bare = project({ '.git/HEAD': '', 'package.json': 'not json' })
+    expect(detectPackageManager(bare, { npm_config_user_agent: 'bun/1.3.0 npm/? node/v24.3.0 win32 x64' })).toBe('bun')
+    expect(detectPackageManager(bare, { npm_config_user_agent: 'deno/2' })).toBe('npm')
+    expect(detectPackageManager(bare, {})).toBe('npm')
+  })
+
+  it("writes each package manager's own commands", () => {
+    const forms = (['npm', 'pnpm', 'yarn', 'bun'] as const).map((pm) => {
+      setPackageManager(pm)
+      return [arca(), runScript('dev'), runScript('test'), installCommand(), addDevCommand('x')]
+    })
+    setPackageManager('npm')
+    expect(forms).toEqual([
+      ['npx arca', 'npm run dev', 'npm test', 'npm install', 'npm i -D x'],
+      ['pnpm arca', 'pnpm dev', 'pnpm test', 'pnpm install', 'pnpm add -D x'],
+      ['yarn arca', 'yarn dev', 'yarn test', 'yarn install', 'yarn add -D x'],
+      ['bun arca', 'bun run dev', 'bun run test', 'bun install', 'bun add -d x'],
+    ])
   })
 })

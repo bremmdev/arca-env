@@ -94,8 +94,7 @@ export function isInteractive(ctx: Context, allowPipedStdin = false): boolean {
  */
 export function verifyScript(io: IO, command: string[]): Invocation {
   const name = io.env.npm_lifecycle_event
-  const script = io.env.npm_lifecycle_script
-  if (!name || script === undefined) return { kind: 'adhoc' }
+  if (!name) return { kind: 'adhoc' }
   const pkgPath = findPackageJson(io)
   if (!pkgPath) return { kind: 'script', name, verified: false, reason: 'no package.json found' }
   let scripts: Record<string, unknown> = {}
@@ -105,7 +104,12 @@ export function verifyScript(io: IO, command: string[]): Invocation {
     return { kind: 'script', name, verified: false, reason: 'package.json is not valid JSON' }
   }
   // `npx …` / `npm exec …` set npm_lifecycle_event=npx with the ad-hoc command as the "script".
-  if (!Object.hasOwn(scripts, name)) return { kind: 'adhoc' }
+  // `yarn <bin>` (yarn 1) sets npm_lifecycle_event to the binary's name, with no script.
+  if (!Object.hasOwn(scripts, name) || typeof scripts[name] !== 'string') return { kind: 'adhoc' }
+  // Yarn 2+ sets npm_lifecycle_event but not npm_lifecycle_script, so the script text comes
+  // from package.json. That's no weaker: both vars are plain env vars anyone can set, and what
+  // actually binds the run to the script is the command check below.
+  const script = io.env.npm_lifecycle_script ?? scripts[name]
   if (scripts[name] !== script) {
     return { kind: 'script', name, verified: false, reason: `the "${name}" script in package.json doesn't match what the package manager ran` }
   }

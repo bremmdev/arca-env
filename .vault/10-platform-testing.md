@@ -36,7 +36,7 @@ One workflow, two jobs. The filename stays `publish.yml` because npm trusted pub
 ```
 on: [push, pull_request]
 test:            matrix os [ubuntu-latest, windows-latest] × node [24, 26], plus ubuntu-24.04-arm × 24
-                 npm ci → typecheck → test → build → smoke (layer 3) → smoke with pnpm
+                 npm ci → typecheck → test → build → smoke (layer 3) → smoke with pnpm, yarn 1, yarn 4, bun
 alpine:          docker run node:24-alpine: npm ci → typecheck → test → build → smoke
 keychain-linux:  real Secret Service (gnome-keyring under dbus-run-session)
 publish:         needs: test, alpine, keychain-linux, only on push to main
@@ -83,7 +83,9 @@ Rule for platform-specific tests: use `it.runIf(process.platform === 'linux')` e
 
 The script strips agent markers and `npm_*`/`ARCA_*` vars it inherited, so it gives the same result when run from Claude Code. `ARCA_SMOKE_KEEP=1` keeps the temp folder for inspection.
 
-✅ `npm run smoke -- --pnpm` (2026-11-03) runs every step with pnpm instead: `pnpm add` of the tarball, `pnpm run dev`, `pnpm exec arca`. The package then sits behind a symlink (a junction on Windows) in `node_modules/.pnpm/@bremmdev+arca-env@file+…`, so the console guard is preloaded from a path with `+` and `@` in it. Runs in every test job after the npm smoke test, with pnpm 12 (pinned major). Passed on Windows and Linux before it went into CI. yarn isn't covered.
+✅ `npm run smoke -- --pnpm` (2026-11-03) runs every step with pnpm instead: `pnpm add` of the tarball, `pnpm run dev`, `pnpm exec arca`. The package then sits behind a symlink (a junction on Windows) in `node_modules/.pnpm/@bremmdev+arca-env@file+…`, so the console guard is preloaded from a path with `+` and `@` in it. Runs in every test job after the npm smoke test, with pnpm 12 (pinned major). Passed on Windows and Linux before it went into CI.
+
+✅ `--yarn`, `--yarn-berry` and `--bun` (2026-11-05) do the same with yarn 1.22, yarn 4.18 and bun 1.3. Both yarns run through corepack, pinned by the project's `packageManager` field (Node 25+ no longer ships corepack, so CI installs it). Yarn 4 runs in its default Plug'n'Play mode: no `node_modules`, the package lives in a zip, and the console guard still loads. Yarn 4 found P13 ([08](08-issue-log.md)): it sets no `npm_lifecycle_script`. Passed on Windows; Linux is first checked in CI.
 
 ### Layer 5: framework coverage (`scripts/frameworks.mjs`, `.github/workflows/frameworks.yml`) ✅ built 2026-11-03
 
@@ -142,6 +144,5 @@ Record anything found in [08](08-issue-log.md), as usual.
 5. ✅ `signals.test.ts` (2026-11-02). No bugs found; one surprise recorded (P7).
 6. ✅ First pass of the manual checklist (2026-11-02). WSL already had Node 24.15 (nvm); the suite and the smoke test pass there (110 tests). M4–M6 were driven through a real pseudo-terminal (a small Python `pty` driver), M5 in Docker. One fix: the locked-keyring message (P8). M1–M3 done 2026-11-03 (P9: the batch prompt is Volta's; P10 fixed). The whole checklist has had a first pass.
 7. ✅ README/doctor wording for macOS (2026-11-02): a "Supported platforms" section in the README; `arca init` and `arca doctor` warn on macOS without failing (tested); D11 in [06](06-roadmap.md).
-8. ✅ arm64 and Alpine jobs, pnpm smoke test (2026-11-03). No bugs found.
+8. ✅ arm64 and Alpine jobs, pnpm smoke test (2026-11-03). No bugs found. yarn 1, yarn 4 and bun smoke tests (2026-11-05) found P13.
 9. ✅ Layer 5, framework coverage (2026-11-03): Next.js and TanStack Start in a daily workflow. No arca bugs found.
-9. Todo: framework coverage job (layer 5), daily and on version bumps.

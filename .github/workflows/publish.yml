@@ -48,6 +48,16 @@ jobs:
         run: npm install -g pnpm@12 # pinned major: a new one is a deliberate bump
       - name: Smoke test with pnpm (symlinked node_modules, pnpm's shims)
         run: npm run smoke -- --pnpm
+      # Corepack runs the yarn pinned by the smoke project's `packageManager`. Node 25+ no
+      # longer ships it, so it's installed for every Node version alike.
+      - name: Install corepack and bun
+        run: npm install -g corepack@0 bun@1 # pinned majors: a new one is a deliberate bump
+      - name: Smoke test with yarn 1
+        run: npm run smoke -- --yarn
+      - name: Smoke test with yarn 4 (Plug'n'Play, no npm_lifecycle_script)
+        run: npm run smoke -- --yarn-berry
+      - name: Smoke test with bun
+        run: npm run smoke -- --bun
 
   # musl and BusyBox. A plain `docker run`, so no JavaScript action has to run inside Alpine.
   alpine:

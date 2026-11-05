@@ -258,7 +258,7 @@ In short, it's best-effort defence in depth, not a security boundary. That's the
 arca **0.2.0 is published on npm** (Node 24 or newer). 0.2.1 is ready: it fixes how a script pinned to another profile behaves inside another arca run, and the version `npx arca --version` reports. It's published when it reaches `main`.
 
 1. **Built**: the encrypted store, `arca run` with masking (including a console guard for dev tools that send server logs to the browser), agent detection, profiles, the leak guard, and the commands above.
-2. **Still being checked**: markers of agents other than Claude Code, script detection under pnpm, yarn and bun, and how Ctrl+C, colours and prompts behave in a real terminal through the masking pipe.
+2. **Still being checked**: markers of agents other than Claude Code, and how Ctrl+C, colours and prompts behave in a real terminal through the masking pipe.
 3. **Later**: a fingerprint or Windows Hello prompt to confirm you're a person, the pseudo-terminal mode, support for IDE test runners and debuggers, `arca scan` with a pre-commit hook, backups, and team sharing.
 
 ---

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { MASTER_KEY_BYTES, newMasterKey, unwrapMasterKey, wrapMasterKey, type WrappedKey } from './crypto.js'
 import { ArcaError } from './errors.js'
 import type { IO } from './io.js'
+import { arca, installCommand } from './hint.js'
 import { atomicWrite, ensureDir, type Store } from './store.js'
 import { storeRoot } from './paths.js'
 
@@ -54,7 +55,7 @@ async function osEntry() {
   } catch (e) {
     throw new ArcaError(
       `arca: the OS keychain binding could not be loaded (${(e as Error).message}).\n` +
-        'Use passphrase mode instead: set ARCA_KEYCHAIN=passphrase before the first `npx arca set`.',
+        `Use passphrase mode instead: set ARCA_KEYCHAIN=passphrase before the first \`${arca()} set\`.`,
     )
   }
 }
@@ -112,7 +113,7 @@ export async function requireMasterKey(store: Store, io: IO): Promise<Buffer> {
   if (!key) {
     throw new ArcaError(
       'arca: no master key found, so the stored secrets cannot be decrypted.\n' +
-        `  Store: ${store.root}\n  Run \`npx arca doctor\` for details.`,
+        `  Store: ${store.root}\n  Run \`${arca()} doctor\` for details.`,
     )
   }
   return key
@@ -240,7 +241,7 @@ function cacheProblem(e: unknown): CacheProblem {
   // cause: node_modules was installed from Windows and the project is now run from WSL.
   if (e instanceof ArcaError) {
     return {
-      problem: "the Linux build of the keyring module isn't installed. This happens when node_modules was installed from Windows: run `npm install` again from WSL or Linux",
+      problem: `the Linux build of the keyring module isn't installed. This happens when node_modules was installed from Windows: run \`${installCommand()}\` again from WSL or Linux`,
       binding: true,
     }
   }

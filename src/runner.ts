@@ -10,6 +10,7 @@ import { scanEnvFiles, summarizeFindings } from './leakguard.js'
 import { decideRun } from './policy.js'
 import { Redactor, createMaskedWriter, needlesFor } from './redact.js'
 import type { Session } from './session.js'
+import { arca } from './hint.js'
 import { plural } from './util.js'
 
 export interface RunOptions {
@@ -26,7 +27,7 @@ export async function runCommand(s: Session, opts: RunOptions): Promise<number> 
   const project = s.project
 
   if (!project) {
-    if (!ctx.ci) s.note(s.err('dim', 'arca: no arca.json found, running without secrets. Set up arca with `npx arca init`.'))
+    if (!ctx.ci) s.note(s.err('dim', `arca: no arca.json found, running without secrets. Set up arca with \`${arca()} init\`.`))
     return spawnChild(s, command, io.env, null)
   }
   s.warnConfig()
@@ -176,7 +177,7 @@ function missingMessage(s: Session, missing: string[], ci: boolean): string {
   const n = missing.length
   const head = `arca: ${n} required variable${n === 1 ? ' is' : 's are'} not set for ${s.forWhom()}:\n  ${missing.join(', ')}`
   if (ci) return `${head}\nAdd ${n === 1 ? 'it' : 'them'} to your CI or hosting platform's environment variables.`
-  return `${head}\nRun \`npx arca setup${s.profileFlag()}\` to set them. Takes about a minute. (AI agents: ask the user to run it.)`
+  return `${head}\nRun \`${arca()} setup${s.profileFlag()}\` to set them. Takes about a minute. (AI agents: ask the user to run it.)`
 }
 
 /** Spawns the command. With needles, stdout and stderr are piped through the masker. */

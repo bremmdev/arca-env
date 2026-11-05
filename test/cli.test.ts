@@ -273,6 +273,9 @@ describe('teammates, CI and edge cases', () => {
   it('reports unknown commands and unknown profiles clearly', async () => {
     const h = project()
     expect((await h.human(['lst'])).io.err()).toContain('Did you mean `npx arca list`')
+    // Hints use the project's package manager: `npx arca` fails under yarn Plug'n'Play.
+    writeJson(join(h.dir, 'package.json'), { packageManager: 'yarn@4.18.1' })
+    expect((await h.human(['lst'])).io.err()).toContain('Did you mean `yarn arca list`? Run `yarn arca help`.')
     const p = await h.human(['run', '--profile', 'acc', '--', 'node', 'print.js'])
     expect(p.code).toBe(2)
     expect(p.io.err()).toContain('profile "acc" (from --profile) isn\'t declared in arca.json. acme-web has one profile (default)')

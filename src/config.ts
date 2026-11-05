@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { dirname, join, resolve } from 'node:path'
 import { ArcaError } from './errors.js'
+import { arca } from './hint.js'
 
 // `arca.json`: committed, names only, never values. JSON (not JS) so that reading it
 // never executes code.
@@ -100,7 +101,7 @@ export function parseProject(text: string, file: string): Project {
   const o = raw as Record<string, unknown>
 
   if (typeof o.id !== 'string' || !/^arc_[a-z2-7]{8,}$/.test(o.id)) {
-    fail('"id" must be an arca project ID like "arc_7k2m9q4x8w1z3p5n". Run `npx arca init` to create one.')
+    fail(`"id" must be an arca project ID like "arc_7k2m9q4x8w1z3p5n". Run \`${arca()} init\` to create one.`)
   }
   const name = o.name === undefined ? dirnameName(file) : o.name
   if (typeof name !== 'string') fail('"name" must be a string')
@@ -158,7 +159,7 @@ function parseDecl(key: string, v: Record<string, unknown>, fail: (m: string) =>
     }
   }
   if ('default' in v || 'value' in v) {
-    fail(`vars.${key} has a value. ${CONFIG_FILE} holds names only: put secrets in arca (\`npx arca set ${key}\`) and config in .env.`)
+    fail(`vars.${key} has a value. ${CONFIG_FILE} holds names only: put secrets in arca (\`${arca()} set ${key}\`) and config in .env.`)
   }
   if (v.generate !== undefined) {
     const g = v.generate

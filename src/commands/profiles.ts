@@ -4,6 +4,7 @@ import { humanGate } from '../policy.js'
 import type { ResolvedVar, Session } from '../session.js'
 import { pad, type Style } from '../style.js'
 import { plural } from '../util.js'
+import { arca } from '../hint.js'
 import { activeWhy, sourceLabel } from './info.js'
 import { storeValue } from './values.js'
 
@@ -31,17 +32,17 @@ export async function useCommand(s: Session, opts: { profile?: string; reset?: b
     }
     s.warnConfig()
     s.print(`${s.profile}${s.out('dim', activeWhy(s))}`)
-    if (!s.multiProfile) s.note(p('dim', `${name} has one profile. Add another with \`npx arca profiles add <name>\`.`))
-    else s.note(p('dim', `Profiles: ${s.profiles.join(', ')}. Switch with \`npx arca use <profile>\`.`))
+    if (!s.multiProfile) s.note(p('dim', `${name} has one profile. Add another with \`${arca()} profiles add <name>\`.`))
+    else s.note(p('dim', `Profiles: ${s.profiles.join(', ')}. Switch with \`${arca()} use <profile>\`.`))
     return 0
   }
 
   const profile = s.checkProfile(project, opts.profile, 'arca use')
   s.store.writeState(id, { activeProfile: profile, setAt: new Date().toISOString() })
   s.note(`${p('green', '✔')} ${name} now uses profile ${profile} for every arca run on this machine`)
-  s.note(`  Back to ${defaultProfile}:  npx arca use --reset`)
+  s.note(`  Back to ${defaultProfile}:  ${arca()} use --reset`)
   const missing = await missingFor(s, profile)
-  if (missing.length) s.note(p('yellow', `⚠ ${profile} has no value for ${missing.join(', ')}. Run \`npx arca setup --profile ${profile}\`.`))
+  if (missing.length) s.note(p('yellow', `⚠ ${profile} has no value for ${missing.join(', ')}. Run \`${arca()} setup --profile ${profile}\`.`))
   envOverrideNote(s)
   return 0
 }
@@ -84,7 +85,7 @@ export async function profilesCommand(s: Session, args: string[], opts: Profiles
       return removeProfile(s, rest[0], opts)
   }
   throw new ArcaError(
-    'arca: usage: npx arca profiles [list]  |  add <name> [--extends p]  |  diff <a> <b>  |  copy <from> <to> [--only A,B]  |  rm <name>',
+    `arca: usage: ${arca()} profiles [list]  |  add <name> [--extends p]  |  diff <a> <b>  |  copy <from> <to> [--only A,B]  |  rm <name>`,
     EXIT_USAGE,
   )
 }
@@ -121,13 +122,13 @@ async function listProfiles(s: Session): Promise<number> {
     const tags = [x.default ? 'default' : '', ...x.envFiles].filter(Boolean)
     s.print(`${pad(label, w)}${pad(x.extends ?? '–', 14)}${pad(values, 22)}${missing}${tags.length ? p('dim', `  (${tags.join(', ')})`) : ''}`)
   }
-  s.print(p('dim', `\n● active (${sourceLabel(s)}). Switch: npx arca use <profile>   Add: npx arca profiles add <name> [--extends ${project.config.defaultProfile}]`))
+  s.print(p('dim', `\n● active (${sourceLabel(s)}). Switch: ${arca()} use <profile>   Add: ${arca()} profiles add <name> [--extends ${project.config.defaultProfile}]`))
   return 0
 }
 
 async function addProfile(s: Session, raw: string | undefined, opts: ProfilesOptions): Promise<number> {
   const project = s.requireProject()
-  if (!raw) throw new ArcaError('arca: missing profile name. Usage: npx arca profiles add <name> [--extends <profile>]', EXIT_USAGE)
+  if (!raw) throw new ArcaError(`arca: missing profile name. Usage: ${arca()} profiles add <name> [--extends <profile>]`, EXIT_USAGE)
   const name = normalizeProfile(raw)
   const bad = invalidProfileName(name)
   if (bad) throw new ArcaError(`arca: ${bad}.`, EXIT_USAGE)
@@ -137,19 +138,19 @@ async function addProfile(s: Session, raw: string | undefined, opts: ProfilesOpt
   const p = s.err
   s.note(`${p('green', '✔')} Added profile ${name}${parent ? ` (extends ${parent}, so it only stores what differs)` : ''} to arca.json`)
   s.note('  Next, in your own terminal:')
-  if (parent) s.note(`    npx arca set NAME --profile ${name}             override a value from ${parent}`)
+  if (parent) s.note(`    ${arca()} set NAME --profile ${name}             override a value from ${parent}`)
   else {
-    s.note(`    npx arca profiles copy ${project.config.defaultProfile} ${name}    start from ${project.config.defaultProfile}'s values, or`)
-    s.note(`    npx arca setup --profile ${name}               enter each value`)
+    s.note(`    ${arca()} profiles copy ${project.config.defaultProfile} ${name}    start from ${project.config.defaultProfile}'s values, or`)
+    s.note(`    ${arca()} setup --profile ${name}               enter each value`)
   }
-  s.note(`    npx arca use ${name}                         switch to it`)
+  s.note(`    ${arca()} use ${name}                         switch to it`)
   return 0
 }
 
 /** Names only: which values each profile sets itself, and which it inherits. */
 async function diffProfiles(s: Session, rawA: string | undefined, rawB: string | undefined): Promise<number> {
   const project = s.requireProject()
-  if (!rawA || !rawB) throw new ArcaError('arca: usage: npx arca profiles diff <a> <b>', EXIT_USAGE)
+  if (!rawA || !rawB) throw new ArcaError(`arca: usage: ${arca()} profiles diff <a> <b>`, EXIT_USAGE)
   const a = s.checkProfile(project, rawA, 'profiles diff')
   const b = s.checkProfile(project, rawB, 'profiles diff')
   const va = s.hasVault(a) ? await s.resolve(a) : new Map<string, ResolvedVar>()
@@ -178,11 +179,11 @@ async function diffProfiles(s: Session, rawA: string | undefined, rawB: string |
 
 async function copyProfile(s: Session, rawFrom: string | undefined, rawTo: string | undefined, opts: ProfilesOptions): Promise<number> {
   const project = s.requireProject()
-  if (!rawFrom || !rawTo) throw new ArcaError('arca: usage: npx arca profiles copy <from> <to> [--only A,B]', EXIT_USAGE)
+  if (!rawFrom || !rawTo) throw new ArcaError(`arca: usage: ${arca()} profiles copy <from> <to> [--only A,B]`, EXIT_USAGE)
   const from = s.checkProfile(project, rawFrom, 'profiles copy')
   const to = s.checkProfile(project, rawTo, 'profiles copy')
   if (from === to) throw new ArcaError('arca: <from> and <to> are the same profile.', EXIT_USAGE)
-  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca profiles copy ${from} ${to}${opts.only ? ` --only ${opts.only.join(',')}` : ''}` })
+  await humanGate(s.io, s.ctx, { kind: 'write', command: `${arca()} profiles copy ${from} ${to}${opts.only ? ` --only ${opts.only.join(',')}` : ''}` })
 
   const source = await s.resolve(from)
   const only = opts.only ? new Set(opts.only) : null
@@ -212,19 +213,19 @@ async function copyProfile(s: Session, rawFrom: string | undefined, rawTo: strin
   const skipped = picked.length - copied.length
   s.note(`${s.err('green', '✔')} Copied ${plural(copied.length, 'value')} from ${from} to ${to}${copied.length ? `: ${copied.join(', ')}` : ''}`)
   if (skipped) s.note(s.err('dim', `  ${plural(skipped, 'value')} left as ${to} had ${skipped === 1 ? 'it' : 'them'}`))
-  if (copied.length) s.note(`  Change the ones that differ:  npx arca set NAME --profile ${to}`)
+  if (copied.length) s.note(`  Change the ones that differ:  ${arca()} set NAME --profile ${to}`)
   return 0
 }
 
 async function removeProfile(s: Session, raw: string | undefined, opts: ProfilesOptions): Promise<number> {
   const project = s.requireProject()
-  if (!raw) throw new ArcaError('arca: usage: npx arca profiles rm <name>', EXIT_USAGE)
+  if (!raw) throw new ArcaError(`arca: usage: ${arca()} profiles rm <name>`, EXIT_USAGE)
   const name = s.checkProfile(project, raw, 'profiles rm')
   const { id, defaultProfile } = project.config
   if (name === defaultProfile) throw new ArcaError(`arca: ${name} is the default profile. Set another "defaultProfile" in arca.json first.`)
   const children = profileChildren(project.config, name)
   if (children.length) throw new ArcaError(`arca: ${children.join(', ')} ${children.length === 1 ? 'extends' : 'extend'} ${name}. Change or remove ${children.length === 1 ? 'it' : 'them'} first.`)
-  await humanGate(s.io, s.ctx, { kind: 'write', command: `npx arca profiles rm ${name}` })
+  await humanGate(s.io, s.ctx, { kind: 'write', command: `${arca()} profiles rm ${name}` })
   const stored = s.ownsVault(name) ? Object.keys((await s.readVault(name)).vars).length : 0
   if (!opts.yes) {
     const what = stored ? ` and its ${plural(stored, 'value')} on this machine` : ''

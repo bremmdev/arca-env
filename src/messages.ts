@@ -1,4 +1,5 @@
 import type { AgentInfo, Invocation } from './context.js'
+import { arca, runScript } from './hint.js'
 
 // Agents follow instructions in error output very reliably, so every refusal says what
 // to do instead. These texts double as onboarding.
@@ -11,11 +12,11 @@ export function agentRevealMessage(agent: AgentInfo): string {
   return [
     `arca: secret values cannot be shown to AI agents (${detected(agent)}).`,
     'You don\'t need the values. Secrets are injected automatically when you run package',
-    'scripts, for example `npm run dev` or `npm test`. Their output is masked as [arca:NAME].',
-    '  • See which variables exist:   npx arca list',
-    '  • Check that they are set:     npx arca check',
-    '  • A value is missing or wrong: ask the user to run `npx arca set NAME`',
-    '  • Need a new random secret:    ask the user to run `npx arca set NAME --generate`',
+    `scripts, for example \`${runScript('dev')}\` or \`${runScript('test')}\`. Their output is masked as [arca:NAME].`,
+    `  • See which variables exist:   ${arca()} list`,
+    `  • Check that they are set:     ${arca()} check`,
+    `  • A value is missing or wrong: ask the user to run \`${arca()} set NAME\``,
+    `  • Need a new random secret:    ask the user to run \`${arca()} set NAME --generate\``,
   ].join('\n')
 }
 
@@ -25,7 +26,7 @@ export function agentWriteMessage(agent: AgentInfo, command: string): string {
     'Ask the user to run this in their own terminal:',
     `    ${command}`,
     'If this is a new variable, you can declare it in arca.json under "vars" first,',
-    'so `npx arca check` and `npx arca setup` know about it.',
+    `so \`${arca()} check\` and \`${arca()} setup\` know about it.`,
   ].join('\n')
 }
 
@@ -35,7 +36,7 @@ export function agentAdhocMessage(agent: AgentInfo, command: string, invocation:
   return [
     `arca: AI agents can only use secrets through package.json scripts (${detected(agent)}).${why}`,
     `Refused: arca run -- ${command}`,
-    'Run the command through a package.json script that uses `arca run`, e.g. `npm run dev`.',
+    `Run the command through a package.json script that uses \`arca run\`, e.g. \`${runScript('dev')}\`.`,
     'If no script exists for what you need, ask the user to add one.',
   ].join('\n')
 }
@@ -60,17 +61,17 @@ export function agentsSnippet(): string {
 Secrets are stored outside the repo with arca and injected when commands run.
 \`.env\` files in this project contain only non-sensitive config, which you may read and edit.
 
-- Run the app, tests and tools through package scripts (\`npm run dev\`, \`npm test\`, …),
+- Run the app, tests and tools through package scripts (\`${runScript('dev')}\`, \`${runScript('test')}\`, …),
   which wrap commands in \`arca run\`. Ad-hoc \`arca run -- <cmd>\` is refused for agents.
   Output is always masked: secrets appear as \`[arca:NAME]\`.
-- \`npx arca list\` shows which variables exist. \`npx arca check\` verifies required ones are set.
+- \`${arca()} list\` shows which variables exist. \`${arca()} check\` verifies required ones are set.
 - A project can have several profiles (sets of values). A run that doesn't use the default
-  profile starts with an \`arca ▸ profile …\` line. Don't switch profiles with \`npx arca use\`
+  profile starts with an \`arca ▸ profile …\` line. Don't switch profiles with \`${arca()} use\`
   unless the user asks: it also changes what the user's own terminals use.
-- Do not try to read secret values (\`npx arca reveal\`, printing \`process.env\`, reading the
+- Do not try to read secret values (\`${arca()} reveal\`, printing \`process.env\`, reading the
   arca store).
 - Only the user can set or change values. If a value is missing or wrong, ask the user
-  to run \`npx arca set NAME\` (or \`npx arca set NAME --generate\` for a random secret).
+  to run \`${arca()} set NAME\` (or \`${arca()} set NAME --generate\` for a random secret).
 - To add a secret: declare it in \`arca.json\` under \`vars\`, then ask the user to set it.
   To add non-sensitive config: put it in \`.env\` and declare it with \`"sensitive": false\`.
 - Never put secrets (keys, tokens, passwords, connection strings with credentials) in

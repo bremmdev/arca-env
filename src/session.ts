@@ -10,6 +10,7 @@ import { loadMasterKey, requireMasterKey } from './keychain.js'
 import { storeRoot } from './paths.js'
 import type { Secret } from './redact.js'
 import { Store, emptyVault, type VaultData } from './store.js'
+import { arca } from './hint.js'
 import { painter, type Paint } from './style.js'
 import { suggest } from './util.js'
 
@@ -86,7 +87,7 @@ export class Session {
     const guess = suggest(name, names)
     const hint =
       names.length === 1
-        ? `${project.config.name} has one profile (${names[0]}). Add one with \`npx arca profiles add ${name}\`.`
+        ? `${project.config.name} has one profile (${names[0]}). Add one with \`${arca()} profiles add ${name}\`.`
         : `Profiles: ${names.join(', ')}.${guess ? ` Did you mean ${guess}?` : ''}`
     throw new ArcaError(`arca: profile "${raw}" (from ${via}) isn't declared in arca.json. ${hint}`, EXIT_USAGE)
   }
@@ -107,7 +108,7 @@ export class Session {
       this.note(
         this.err(
           'yellow',
-          `arca: the active profile "${this.staleActiveProfile}" (set with \`arca use\`) isn't in arca.json any more. Using ${this.profile}. \`npx arca use --reset\` clears it.`,
+          `arca: the active profile "${this.staleActiveProfile}" (set with \`arca use\`) isn't in arca.json any more. Using ${this.profile}. \`${arca()} use --reset\` clears it.`,
         ),
       )
     }
@@ -115,7 +116,7 @@ export class Session {
 
   requireProject(): Project {
     if (!this.project) {
-      throw new ArcaError('arca: no arca.json found in this folder or any parent. Run `npx arca init` to set up arca for this project.')
+      throw new ArcaError(`arca: no arca.json found in this folder or any parent. Run \`${arca()} init\` to set up arca for this project.`)
     }
     return this.project
   }
@@ -243,7 +244,7 @@ export class Session {
         this.err(
           'yellow',
           `arca: arca.json id ${project.config.id} is also used by ${prev.roots[0] ?? 'another project'} (git remote ${prev.gitRemote}).\n` +
-            '  Two different repos share secrets. If that is wrong, run `npx arca init --new-id` in one of them.',
+            `  Two different repos share secrets. If that is wrong, run \`${arca()} init --new-id\` in one of them.`,
         ),
       )
     }

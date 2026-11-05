@@ -1,6 +1,8 @@
+import { resolve } from 'node:path'
 import { parseArgs, type ParseArgsConfig } from 'node:util'
 import { RUN_OPTIONS_WITH_VALUE } from './context.js'
 import { ArcaError, EXIT_USAGE } from './errors.js'
+import { arca, detectPackageManager, setPackageManager } from './hint.js'
 import type { IO } from './io.js'
 import { runCommand } from './runner.js'
 import { Session } from './session.js'
@@ -14,9 +16,9 @@ import pkg from '../package.json' with { type: 'json' }
 
 export const VERSION: string = pkg.version
 
-const HELP = `arca: keep secrets out of .env files and out of reach of AI agents
+const help = (): string => `arca: keep secrets out of .env files and out of reach of AI agents
 
-Usage: npx arca <command> [options]    (inside package.json scripts, plain "arca" works)
+Usage: ${arca()} <command> [options]    (inside package.json scripts, plain "arca" works)
 
 Everyday
   run [opts] -- <cmd>     Run a command with the project's secrets injected, output masked
@@ -67,14 +69,26 @@ function parse(args: string[], options: ParseArgsConfig['options'] = {}): { valu
     const r = parseArgs({ args, options: { ...GLOBAL_OPTIONS, ...options }, allowPositionals: true, strict: true })
     return { values: r.values as Values, positionals: r.positionals }
   } catch (e) {
-    throw new ArcaError(`arca: ${(e as Error).message.replace(/\. To specify a positional.*$/s, '')}\nRun \`npx arca help\` for usage.`, EXIT_USAGE)
+    throw new ArcaError(`arca: ${(e as Error).message.replace(/\. To specify a positional.*$/s, '')}\nRun \`${arca()} help\` for usage.`, EXIT_USAGE)
   }
 }
 
 const COMMANDS = ['run', 'list', 'ls', 'check', 'doctor', 'set', 'setup', 'unset', 'restore', 'reveal', 'export', 'import', 'init', 'use', 'profiles', 'profile', 'policy', 'projects', 'help', 'version']
 
+/** `--project-dir` from the raw arguments, so hints name that project's package manager. */
+function projectDirArg(argv: string[]): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!
+    if (a === '--') return undefined // the rest belongs to the command `arca run` starts
+    if (a === '--project-dir') return argv[i + 1]
+    if (a.startsWith('--project-dir=')) return a.slice('--project-dir='.length)
+  }
+  return undefined
+}
+
 export async function main(argv: string[], io: IO): Promise<number> {
   try {
+    setPackageManager(detectPackageManager(resolve(io.cwd, projectDirArg(argv) ?? '.'), io.env))
     return await dispatch(argv, io)
   } catch (e) {
     if (e instanceof ArcaError) {
@@ -93,7 +107,7 @@ async function dispatch(argv: string[], io: IO): Promise<number> {
     return 0
   }
   if (command === '--help' || command === '-h' || command === 'help') {
-    io.stdout.write(HELP + '\n')
+    io.stdout.write(help() + '\n')
     return 0
   }
   if (command === undefined || (command.startsWith('-') && command !== '--')) {
@@ -103,7 +117,7 @@ async function dispatch(argv: string[], io: IO): Promise<number> {
   if (command === 'run' || command === '--') return run(command === '--' ? ['--', ...rest] : rest, io)
   if (!COMMANDS.includes(command)) {
     const guess = suggest(command, COMMANDS)
-    throw new ArcaError(`arca: unknown command "${command}".${guess ? ` Did you mean \`npx arca ${guess}\`?` : ''} Run \`npx arca help\`.`, EXIT_USAGE)
+    throw new ArcaError(`arca: unknown command "${command}".${guess ? ` Did you mean \`${arca()} ${guess}\`?` : ''} Run \`${arca()} help\`.`, EXIT_USAGE)
   }
 
   switch (command) {
@@ -122,7 +136,7 @@ async function dispatch(argv: string[], io: IO): Promise<number> {
     }
     case 'use': {
       const { values, positionals } = parse(rest, { reset: { type: 'boolean' } })
-      if (positionals.length > 1) throw new ArcaError('arca: too many arguments. Usage: npx arca use [profile] | npx arca use --reset', EXIT_USAGE)
+      if (positionals.length > 1) throw new ArcaError(`arca: too many arguments. Usage: ${arca()} use [profile] | ${arca()} use --reset`, EXIT_USAGE)
       return useCommand(session(io, values), { profile: positionals[0], reset: Boolean(values.reset) })
     }
     case 'profile':
@@ -145,7 +159,7 @@ async function dispatch(argv: string[], io: IO): Promise<number> {
           if (!Number.isInteger(generate) || generate < 8 || generate > 1024) throw new ArcaError('arca: --generate takes a number of bytes from 8 to 1024.', EXIT_USAGE)
         }
       }
-      if (positionals.length > 2) throw new ArcaError('arca: too many arguments. Usage: npx arca set NAME [value]', EXIT_USAGE)
+      if (positionals.length > 2) throw new ArcaError(`arca: too many arguments. Usage: ${arca()} set NAME [value]`, EXIT_USAGE)
       return setCommand(session(io, values), { name: positionals[0], value: positionals[1], generate })
     }
     case 'setup': {
@@ -156,7 +170,7 @@ async function dispatch(argv: string[], io: IO): Promise<number> {
     case 'restore':
     case 'reveal': {
       const { values, positionals } = parse(rest, { copy: { type: 'boolean' }, ...profileOption })
-      if (values.copy) throw new ArcaError('arca: --copy is not available yet. Use `npx arca reveal NAME` in your terminal.', EXIT_USAGE)
+      if (values.copy) throw new ArcaError(`arca: --copy is not available yet. Use \`${arca()} reveal NAME\` in your terminal.`, EXIT_USAGE)
       const s = session(io, values)
       if (command === 'unset') return unsetCommand(s, positionals[0])
       if (command === 'restore') return restoreCommand(s, positionals[0])
@@ -202,7 +216,7 @@ const profileOption = { profile: { type: 'string', short: 'p' } } satisfies Pars
 
 function session(io: IO, values: Values): Session {
   if (values.help) {
-    io.stdout.write(HELP + '\n')
+    io.stdout.write(help() + '\n')
     throw new ArcaError('', 0)
   }
   const s = new Session(io, { projectDir: values['project-dir'] as string | undefined, profile: values.profile as string | undefined })

@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { relative } from 'node:path'
 import { isSensitive, type Project } from './config.js'
+import { arca } from './hint.js'
 import type { EnvFile } from './envfiles.js'
 import { needlesFor, type Secret } from './redact.js'
 
@@ -115,5 +116,5 @@ export function summarizeFindings(findings: Finding[]): string {
   const files = [...new Set(findings.map((f) => f.file))]
   const tracked = findings.some((f) => f.tracked)
   const what = findings.length === 1 ? '1 possible secret' : `${findings.length} possible secrets`
-  return `arca: ${what} in ${files.join(', ')}${tracked ? ' (committed to git!)' : ''}. Run \`npx arca doctor\` for details.`
+  return `arca: ${what} in ${files.join(', ')}${tracked ? ' (committed to git!)' : ''}. Run \`${arca()} doctor\` for details.`
 }

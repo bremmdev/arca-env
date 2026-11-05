@@ -8,8 +8,12 @@ import { main } from '../src/main.js'
 
 export const PASSPHRASE = 'test-passphrase-123'
 
+/** Every test folder lives here, so test/global-setup.ts can remove them all (issue log O8). */
+export const TEST_ROOT = join(tmpdir(), 'arca-tests')
+
 export function tempDir(prefix = 'arca-test-'): string {
-  return mkdtempSync(join(tmpdir(), prefix))
+  mkdirSync(TEST_ROOT, { recursive: true })
+  return mkdtempSync(join(TEST_ROOT, prefix))
 }
 
 /** A store in passphrase mode with cheap scrypt params, so tests don't touch the real keychain. */

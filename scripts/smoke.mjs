@@ -4,16 +4,18 @@
 // shim (.cmd on Windows), the console guard preloaded from node_modules, the native
 // keyring binding installing, and the package exports.
 //
-// Run with `npm run build && npm run smoke`. `npm run smoke -- --pnpm` installs and runs it
-// with pnpm instead (symlinked node_modules, pnpm's own shims). Set ARCA_SMOKE_KEEP=1 to
-// keep the temp folder.
+// Run with `npm run build && npm run smoke`. Add `-- --pnpm`, `-- --yarn` (yarn 1),
+// `-- --yarn-berry` (yarn 4, Plug'n'Play) or `-- --bun` to install and run it with that package
+// manager instead: their own shims and lifecycle variables (yarn 4 sets no
+// npm_lifecycle_script). Both yarns run through corepack, pinned with `packageManager`. Set
+// ARCA_SMOKE_KEEP=1 to keep the temp folder.
 
 import spawn from 'cross-spawn'
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 const repo = join(import.meta.dirname, '..')
@@ -53,15 +55,28 @@ function npm(args, env, cwd = project) {
 }
 
 // The package manager under test, for installing the tarball and running arca.
-const pm = process.argv.includes('--pnpm') ? 'pnpm' : 'npm'
+// `exec` is the ad-hoc way to run a local binary, which agents must be refused.
+const PMS = {
+  npm: { install: (t) => ['install', '--save-dev', '--no-audit', '--no-fund', t], exec: (a) => ['exec', '--', ...a] },
+  pnpm: { install: (t) => ['add', '--save-dev', t], exec: (a) => ['exec', ...a] },
+  // `--silent` drops yarn 1's "yarn run v1…" and "Done in" lines around the output.
+  yarn: { via: ['corepack', 'yarn'], packageManager: 'yarn@1.22.22', install: (t) => ['add', '--dev', t], exec: (a) => ['--silent', ...a] },
+  'yarn-berry': { via: ['corepack', 'yarn'], packageManager: 'yarn@4.18.1', install: (t) => ['add', '--dev', `@bremmdev/arca-env@${t}`], exec: (a) => ['exec', ...a] },
+  bun: { install: (t) => ['add', '--dev', t], exec: (a) => ['x', ...a] },
+}
+const pm = Object.keys(PMS).find((name) => process.argv.includes(`--${name}`)) ?? 'npm'
+const { via = [pm], packageManager, install, exec: execArgs } = PMS[pm]
 function tool(args, env) {
   if (pm === 'npm') return npm(args, env)
-  // cross-spawn finds pnpm.cmd on Windows without a shell.
-  const r = spawn.sync('pnpm', args, { cwd: project, env, encoding: 'utf8' })
+  // cross-spawn finds pnpm.cmd and corepack.cmd on Windows without a shell.
+  // Corepack must not stop to ask before downloading the pinned yarn.
+  const r = spawn.sync(via[0], [...via.slice(1), ...args], { cwd: project, env: { ...env, COREPACK_ENABLE_DOWNLOAD_PROMPT: '0' }, encoding: 'utf8' })
   if (r.error) throw r.error
   return { code: r.status, stdout: r.stdout, out: r.stdout + r.stderr }
 }
-const exec = (args, env) => tool(pm === 'npm' ? ['exec', '--', ...args] : ['exec', ...args], env)
+const exec = (args, env) => tool(execArgs(args), env)
+/** How the step names show an ad-hoc command, e.g. `bun x arca doctor`. */
+const shown = (args) => `${pm.replace('-berry', '')} ${execArgs(args).join(' ')}`
 
 /** process.env without the npm_* and arca_* vars of whoever started this script. */
 function ownEnv() {
@@ -83,8 +98,10 @@ async function cleanEnv(extra = {}) {
 
 let api
 async function arcaApi() {
-  // Resolved from the temp project, so this goes through the package's `exports`.
-  api ??= await import(pathToFileURL(createRequire(join(project, 'package.json')).resolve('@bremmdev/arca-env')).href)
+  // Resolved from the temp project, so this goes through the package's `exports`. Plug'n'Play
+  // keeps packages in zip files plain Node can't import, so yarn 4 uses the build it packed.
+  const entry = pm === 'yarn-berry' ? join(repo, 'dist', 'index.mjs') : createRequire(join(project, 'package.json')).resolve('@bremmdev/arca-env')
+  api ??= await import(pathToFileURL(entry).href)
   return api
 }
 
@@ -123,19 +140,37 @@ try {
     mkdirSync(project)
     writeFileSync(
       join(project, 'package.json'),
-      JSON.stringify({ name: 'arca-smoke', private: true, scripts: { dev: 'arca run -- node app.js' } }, null, 2),
+      JSON.stringify({ name: 'arca-smoke', private: true, packageManager, scripts: { dev: 'arca run -- node app.js' } }, null, 2),
     )
+    // Yarn 4 wants a lockfile to know where the project starts.
+    if (pm === 'yarn-berry') writeFileSync(join(project, 'yarn.lock'), '')
     writeFileSync(join(project, 'arca.json'), JSON.stringify({ id: 'arc_smoketest', name: 'arca-smoke', vars: { API_KEY: { required: true } } }, null, 2))
     writeFileSync(join(project, 'app.js'), APP)
-    const args = pm === 'npm' ? ['install', '--save-dev', '--no-audit', '--no-fund', tarball] : ['add', '--save-dev', tarball]
-    // pnpm reads npm_config_* as its own config, so it doesn't get the ones `npm run smoke` set.
-    const r = tool(args, pm === 'npm' ? process.env : ownEnv())
+    // yarn and bun take a relative `file:` spec more reliably than a Windows absolute path.
+    // The name is unique per run: yarn 1 caches a `file:` tarball by its path, so a fixed name
+    // would install a previous run's build.
+    const local = `arca-${basename(root)}.tgz`
+    cpSync(tarball, join(project, local))
+    const spec = pm === 'npm' || pm === 'pnpm' ? tarball : `file:./${local}`
+    // pnpm and yarn read npm_config_* as their own config, so they don't get the ones `npm run smoke` set.
+    const r = tool(install(spec), pm === 'npm' ? process.env : ownEnv())
     check(r.code === 0, `${pm} install failed`, r.out)
   })
 
-  await step(`\`${pm} exec arca --version\` reports the package version`, async () => {
+  await step(`\`${shown(['arca', '--version'])}\` reports the package version`, async () => {
     const r = exec(['arca', '--version'], await cleanEnv())
     check(r.code === 0 && r.stdout.trim() === version, `expected ${version}`, r.out)
+  })
+
+  // Hints name the project's package manager: `npx arca` fails under Plug'n'Play, and where
+  // arca isn't installed it would fetch the unrelated `arca` package from npm.
+  const hint = { npm: 'npx arca', pnpm: 'pnpm arca', yarn: 'yarn arca', 'yarn-berry': 'yarn arca', bun: 'bun arca' }[pm]
+  await step(`hints say \`${hint} …\`, and that runs the installed arca`, async () => {
+    const r = exec(['arca', 'lst'], await cleanEnv())
+    check(r.code === 2 && r.out.includes(`Did you mean \`${hint} list\``), `expected a \`${hint} list\` hint`, r.out)
+    if (pm === 'npm') return // `npx arca` is what the `npm exec` steps run
+    const v = tool(['arca', '--version'], await cleanEnv())
+    check(v.code === 0 && v.stdout.includes(version), `\`${hint} --version\` didn't print ${version}`, v.out)
   })
 
   await step('store a secret through the programmatic API (passphrase store)', async () => {
@@ -184,14 +219,14 @@ try {
     check(!r.out.includes(SECRET), 'the secret appeared in the output', r.out)
   })
 
-  await step(`an AI agent is refused an ad-hoc \`${pm} exec arca run\``, async () => {
+  await step(`an AI agent is refused an ad-hoc \`${shown(['arca', 'run'])}\``, async () => {
     const r = exec(['arca', 'run', '--', 'node', 'app.js'], await cleanEnv({ CLAUDECODE: '1' }))
     check(r.code !== 0, 'the ad-hoc run was allowed', r.out)
     check(r.out.includes('AI agents can only use secrets through package.json scripts'), 'expected the agent refusal', r.out)
     check(!r.out.includes(SECRET), 'the secret appeared in the output', r.out)
   })
 
-  await step(`\`${pm} exec arca doctor\` finds the passphrase store, names only`, async () => {
+  await step(`\`${shown(['arca', 'doctor'])}\` finds the passphrase store, names only`, async () => {
     const r = exec(['arca', 'doctor'], await cleanEnv())
     check(r.out.includes('passphrase'), 'expected the passphrase key storage', r.out)
     check(!r.out.includes(SECRET), 'the secret appeared in the output', r.out)

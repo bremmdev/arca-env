@@ -188,7 +188,7 @@ The invocation (`{ kind: 'script', name, verified, reason? }` or `{ kind: 'adhoc
 
 **Script verification** (for the default agent policy `scripts`):
 
-- npm, pnpm, yarn and bun set `npm_lifecycle_event` (script name) and `npm_lifecycle_script` (script text) for scripts *(verify per package manager in Spike S4)*.
+- npm, pnpm, yarn 1 and bun set `npm_lifecycle_event` (script name) and `npm_lifecycle_script` (script text) for scripts. Yarn 2+ sets only `npm_lifecycle_event`, so arca then reads the script text from `package.json` (checked 2026-11-05, P13 in [08](08-issue-log.md)).
 - arca loads `package.json` (from `npm_package_json`, else the nearest one up from cwd) and checks three things: `scripts[npm_lifecycle_event] === npm_lifecycle_script`, the script contains `arca run`, and the command arca was asked to run is the one written after that `arca run` (extra arguments from `npm run dev -- --port 4000` are allowed). Only then is the invocation verified.
 - A lifecycle event that isn't a script in `package.json` counts as ad-hoc. That's how `npx` / `npm exec` look (`npm_lifecycle_event=npx`).
 - Faking this means setting env vars *and* editing `package.json`, which is deliberate and leaves a visible diff.
