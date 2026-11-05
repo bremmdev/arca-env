@@ -23,6 +23,7 @@ arca moves the **secrets** out of `.env` / `.env.local` files in JavaScript proj
 | 8 | [Issue log](08-issue-log.md) | Every error, bug and problem found so far: cause, fix and status. Append new ones here |
 | 9 | [Azure Key Vault references](09-azure-key-vault-references.md) | Research: using `@Microsoft.KeyVault(...)` references locally in Node/Next.js, typical setup, pros and cons, PIM-elevated access |
 | 10 | [Platform testing](10-platform-testing.md) | Plan for testing Windows and Linux thoroughly (CI matrix, new tests, packed-package smoke test, WSL and manual checks). macOS not supported for the MVP |
+| 11 | [`arca request`](11-http-requests.md) | Design: a built-in command that sends REST Client-style `.http` requests with arca secrets and `.env` config. Format, precedence, masking, host binding, agent rules, VS Code task, migration from REST Client and Postman, risks |
 
 ## The core insight
 

@@ -70,6 +70,15 @@ CI and deploys need no changes: without a store, `arca run` passes the platform'
 
 To go back, `npx arca export --output .env.local` writes every value to a file again (a person at a terminal only), and you remove `arca run -- ` from your scripts.
 
+In Next.js 16, browser console warnings and errors also show up in the terminal (hundreds of them, if your local setup is noisy). That's Next.js, not arca: its `logging.browserToTerminal` option defaults to `'warn'`, and it does the same without `arca run`. To keep only errors, or turn it off:
+
+```js
+// next.config.ts or next.config.mjs
+export default {
+  logging: { browserToTerminal: 'error' }, // or false
+}
+```
+
 ### Several environments in one `.env.local`
 
 A common setup is one `.env.local` with a block per environment, all but one commented out, and switching by moving the comments. Commented-out lines are still plain text that an agent can read, so they have to leave the file too. Each block becomes a [profile](#profiles):
