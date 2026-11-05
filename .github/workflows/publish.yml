@@ -49,9 +49,14 @@ jobs:
       - name: Smoke test with pnpm (symlinked node_modules, pnpm's shims)
         run: npm run smoke -- --pnpm
       # Corepack runs the yarn pinned by the smoke project's `packageManager`. Node 25+ no
-      # longer ships it, so it's installed for every Node version alike.
+      # longer ships it, so it's installed for every Node version alike. Not with -g: the
+      # package also brings pnpm and yarn shims, which collide with the pnpm installed above.
       - name: Install corepack and bun
-        run: npm install -g corepack@0 bun@1 # pinned majors: a new one is a deliberate bump
+        shell: bash
+        run: | # pinned majors: a new one is a deliberate bump
+          npm install --prefix "$RUNNER_TEMP/corepack" --no-audit --no-fund corepack@0
+          echo "$RUNNER_TEMP/corepack/node_modules/.bin" >> "$GITHUB_PATH"
+          npm install -g bun@1
       - name: Smoke test with yarn 1
         run: npm run smoke -- --yarn
       - name: Smoke test with yarn 4 (Plug'n'Play, no npm_lifecycle_script)
