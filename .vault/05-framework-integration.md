@@ -72,7 +72,7 @@ Run each against a fresh starter on **Windows (PowerShell + cmd)**, **macOS** an
 1. `next dev` / `next build`: public var in the client bundle, server var at runtime, HMR, Ctrl+C cleanup with no orphaned processes.
 2. `vite` / TanStack Start / Astro dev + build: `VITE_*` exposure without a file, SSR `process.env`, Vite keyboard shortcuts with piped stdout.
 3. `nuxi dev`, `svelte-kit dev`, `react-router dev`.
-4. `prisma migrate dev` interactive prompt in pipe mode. Clack/inquirer-style prompts check `isTTY` and may degrade. Since output is always masked there's no inherit fallback, so every tool that breaks here is a reason to ship PTY mode sooner.
+4. `prisma migrate dev` interactive prompt in pipe mode. Clack/inquirer-style prompts check `isTTY` and may degrade. Since output is always masked there's no inherit fallback, so every tool that breaks here is a reason to ship PTY mode sooner. ✅ Prisma 7.10 on Windows, 2026-11-06: the name prompt works (it checks stdin, not stdout). Vite's shortcuts (item 2) work too. See S2 in [06](06-roadmap.md).
 5. `wrangler dev` binding behaviour.
 6. Turbo strict mode with and without `passThroughEnv`.
 7. Colour fidelity with `FORCE_COLOR` forwarding across all of the above.

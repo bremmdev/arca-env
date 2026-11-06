@@ -11,6 +11,7 @@ import { humanGate } from '../policy.js'
 import { Session } from '../session.js'
 import { plural } from '../util.js'
 import { addDevCommand, arca } from '../hint.js'
+import { CLAUDE_SETTINGS, DENIED_COMMANDS, addDenyRules, claudeDenyRules, missingDenyRules, usesClaudeCode } from '../agent-rules.js'
 import { storeValue } from './values.js'
 
 export const KNOWN_TOOLS = new Set([
@@ -262,6 +263,20 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
       writeFileSync(join(root, f), text.slice(0, section.start) + agentsSnippet().trimEnd() + trailing + text.slice(section.end))
     }
     ok(`Updated the "Secrets (arca)" section in ${outdated.join(' and ')}`)
+  }
+
+  // 5b. Claude Code deny rules, where the project uses Claude Code.
+  if (usesClaudeCode(root) || s.ctx.agent.name === 'claude-code') {
+    const missing = missingDenyRules(root, claudeDenyRules(arca()))
+    const commands = `${DENIED_COMMANDS.slice(0, -1).join(', ')} or ${DENIED_COMMANDS.at(-1)}`
+    if (missing === null) {
+      s.note(s.err('yellow', `⚠ ${CLAUDE_SETTINGS} isn't valid JSON, so Claude Code ignores it, and arca left it alone. Fix it and run \`${arca()} init\` again to add deny rules for arca.`))
+    } else if (missing.length === 0) {
+      step(`Claude Code deny rules for arca are in ${CLAUDE_SETTINGS}`)
+    } else if (await ask(`Add deny rules to ${CLAUDE_SETTINGS}, so Claude Code doesn't try \`arca ${commands}\`? (arca refuses those for agents anyway)`, true)) {
+      addDenyRules(root, missing)
+      ok(`Added ${plural(missing.length, 'deny rule')} to ${CLAUDE_SETTINGS}: Claude Code won't try arca ${commands}, or read the store`)
+    }
   }
 
   // 6. Next steps

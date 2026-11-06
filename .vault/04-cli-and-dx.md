@@ -304,7 +304,13 @@ Secrets are stored outside the repo with arca and injected when commands run.
 
 The last bullet (added 2026-10-22) targets arca's real opponent: a well-meaning agent that treats a refusal as an obstacle to engineer around. It's a stop sign, not a barrier. Re-running `arca init` offers to replace an outdated section in place.
 
-*Not built yet (Phase 2):* optionally (asked during init), arca also adds agent-tool deny rules where they exist, such as Claude Code `permissions.deny` entries for `Bash(arca reveal:*)`, `Bash(arca export:*)`, `Bash(arca set:*)`, `Bash(arca import:*)` and reads of the store path. Agents then don't even try commands arca would refuse anyway. These are a second layer only, since third-party reports show deny rules don't cover every path to a file.
+**Claude Code deny rules (built 2026-11-06, `src/agent-rules.ts`):** in a project that uses Claude Code (a `.claude` folder or `CLAUDE.md`, or init run by Claude Code), init offers to add `permissions.deny` rules to `.claude/settings.json`, the shared, committed file, so the whole team gets them. Default yes; agents and `--yes` get the default. The rules:
+- `Bash(arca <cmd> *)` and `Bash(<runner> <cmd> *)` for `reveal`, `export`, `set` and `import`, where the runner is the project's (`npx arca`, `pnpm arca`, …), and the same as `PowerShell(…)` for Claude Code on Windows. A trailing ` *` also matches the bare command. No leading `*`: `Bash(* arca reveal *)` would also match a commit message or a grep that mentions arca.
+- `Read(~/AppData/Local/arca/**)` and `Read(~/.local/share/arca/**)`, the store's default folders on Windows and Linux. Claude Code applies Read rules to `cat`, `head` and the like too. A custom `ARCA_HOME` isn't covered.
+
+Merging keeps every other setting, the indent and the line endings, and adds only missing rules, so rerunning init changes nothing. A settings file that isn't valid JSON is left alone with a warning (Claude Code ignores such a file entirely, which silently drops all its rules). Agents then don't even try commands arca would refuse anyway. These are a second layer only: Claude Code's docs say command rules cover "the invocation Claude usually produces" and aren't a boundary (`bash -c '…'` or a full path to the bin gets past them), and third-party reports show deny rules don't cover every path to a file.
+
+*Not built:* rules for other agents. Cursor CLI (`.cursor/cli.json`, `Shell(…)` deny), Gemini CLI (`tools.exclude`) and Codex (exec policy rules) have similar mechanisms.
 
 ## Small DX details that matter
 

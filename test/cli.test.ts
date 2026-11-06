@@ -308,6 +308,70 @@ describe('teammates, CI and edge cases', () => {
 
 void mkdirSync
 
+describe('Claude Code deny rules from init', () => {
+  const settingsOf = (h: Harness) => JSON.parse(readFileSync(join(h.dir, '.claude', 'settings.json'), 'utf8'))
+
+  it("an agent-run init in Claude Code adds them, for the project's package manager", async () => {
+    const h = harness()
+    writeJson(join(h.dir, 'package.json'), { name: 'app', packageManager: 'pnpm@10.0.0' })
+    expect((await h.agent(['init'])).code).toBe(0)
+    const deny: string[] = settingsOf(h).permissions.deny
+    expect(deny).toEqual(expect.arrayContaining([
+      'Bash(arca reveal *)', 'Bash(pnpm arca reveal *)', 'Bash(pnpm arca export *)', 'Bash(pnpm arca set *)', 'Bash(pnpm arca import *)',
+      'PowerShell(pnpm arca reveal *)', 'Read(~/AppData/Local/arca/**)', 'Read(~/.local/share/arca/**)',
+    ]))
+    expect(deny.some((r) => r.includes('npx'))).toBe(false)
+  })
+
+  it('merges into existing settings, keeps their format, and adds nothing twice', async () => {
+    const h = harness()
+    writeJson(join(h.dir, 'package.json'), { name: 'app' })
+    mkdirSync(join(h.dir, '.claude'))
+    const original = { permissions: { allow: ['Bash(npm test)'], deny: ['Bash(git push *)', 'Bash(arca reveal *)'] }, model: 'opus' }
+    writeFileSync(join(h.dir, '.claude', 'settings.json'), JSON.stringify(original, null, 4).replace(/\n/g, '\r\n') + '\r\n')
+    const { code, io } = await h.human(['init'], { answers: { text: ['app'], confirm: [false, true] } }) // AGENTS.md: no, deny rules: yes
+    expect(code).toBe(0)
+    expect(io.err()).toContain('Added 17 deny rules to .claude/settings.json')
+    const text = readFileSync(join(h.dir, '.claude', 'settings.json'), 'utf8')
+    expect(text).toContain('\r\n    "permissions"')
+    const settings = JSON.parse(text)
+    expect(settings.model).toBe('opus')
+    expect(settings.permissions.allow).toEqual(['Bash(npm test)'])
+    expect(settings.permissions.deny.slice(0, 3)).toEqual(['Bash(git push *)', 'Bash(arca reveal *)', 'Bash(npx arca reveal *)'])
+    expect(new Set(settings.permissions.deny).size).toBe(settings.permissions.deny.length)
+
+    const again = await h.human(['init'], { answers: { confirm: [false] } }) // AGENTS.md: no
+    expect(again.io.err()).toContain('Claude Code deny rules for arca are in .claude/settings.json')
+    expect(readFileSync(join(h.dir, '.claude', 'settings.json'), 'utf8')).toBe(text)
+  })
+
+  it("leaves a settings file that isn't valid JSON alone, and says so", async () => {
+    const h = harness()
+    writeJson(join(h.dir, 'package.json'), { name: 'app' })
+    mkdirSync(join(h.dir, '.claude'))
+    const broken = '{ "permissions": { "deny": ["Bash(git push *)",] } }\n'
+    writeFileSync(join(h.dir, '.claude', 'settings.json'), broken)
+    const { code, io } = await h.agent(['init'])
+    expect(code).toBe(0)
+    expect(io.err()).toContain(".claude/settings.json isn't valid JSON, so Claude Code ignores it")
+    expect(readFileSync(join(h.dir, '.claude', 'settings.json'), 'utf8')).toBe(broken)
+  })
+
+  it("isn't offered where nothing points to Claude Code, and can be declined", async () => {
+    const h = harness()
+    writeJson(join(h.dir, 'package.json'), { name: 'app' })
+    await h.human(['init'], { answers: { text: ['app'], confirm: [true] } }) // AGENTS.md only
+    expect(existsSync(join(h.dir, '.claude'))).toBe(false)
+
+    const h2 = harness()
+    writeJson(join(h2.dir, 'package.json'), { name: 'app' })
+    writeFileSync(join(h2.dir, 'CLAUDE.md'), '# Notes\n')
+    const declined = await h2.human(['init'], { answers: { text: ['app'], confirm: [true, false] } }) // section: yes, deny rules: no
+    expect(declined.code).toBe(0)
+    expect(existsSync(join(h2.dir, '.claude'))).toBe(false)
+  })
+})
+
 describe('version', () => {
   it('reports the version in package.json', async () => {
     const { version } = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as { version: string }

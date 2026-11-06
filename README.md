@@ -50,7 +50,7 @@ The usual starting point: a `.env.local` (or `.env`) that mixes secrets (`DATABA
    npx arca init
    ```
 
-   It asks for the project name, then which variables are secrets. The ones that look like secrets are preselected; public names such as `NEXT_PUBLIC_*` aren't. Secrets move into arca, everything else stays in your `.env` files as config, and both are declared in `arca.json` (names only). Each `.env.<name>` file, such as `.env.staging`, is offered as a [profile](#profiles). Then it asks which scripts to wrap with `arca run`. `start` stays unwrapped for production, and you're offered a `start:local` that runs the production build with your secrets. Finally it offers a short "Secrets (arca)" section for `AGENTS.md`. The secret values are copied into arca, and your `.env` files aren't changed. The first copy creates the master key: in your OS keychain, or [behind a passphrase](#where-things-are-kept) on WSL and headless Linux.
+   It asks for the project name, then which variables are secrets. The ones that look like secrets are preselected; public names such as `NEXT_PUBLIC_*` aren't. Secrets move into arca, everything else stays in your `.env` files as config, and both are declared in `arca.json` (names only). Each `.env.<name>` file, such as `.env.staging`, is offered as a [profile](#profiles). Then it asks which scripts to wrap with `arca run`. `start` stays unwrapped for production, and you're offered a `start:local` that runs the production build with your secrets. Finally it offers a short "Secrets (arca)" section for `AGENTS.md`, and, in a project that uses Claude Code (a `.claude` folder or `CLAUDE.md`), deny rules in `.claude/settings.json` so Claude Code doesn't try `arca reveal`, `export`, `set` or `import`. arca refuses those for agents anyway; the rules make it ask you straight away. The secret values are copied into arca, and your `.env` files aren't changed. The first copy creates the master key: in your OS keychain, or [behind a passphrase](#where-things-are-kept) on WSL and headless Linux.
 
 2. **Check it works:** `npm run dev` starts with an `arca ▸ … output masked` line and your app behaves as before. `npx arca list` shows where each variable now comes from, and `npx arca doctor` checks the whole setup. Until the next step, the leak guard warns that the secrets are still in your `.env` files. That's expected.
 
@@ -62,7 +62,7 @@ The usual starting point: a `.env.local` (or `.env`) that mixes secrets (`DATABA
 
    This removes only the entries that were imported. Config lines and comments stay, and a file is deleted only if nothing else was in it.
 
-4. **Commit** `arca.json`, `package.json` and `AGENTS.md`. None of them holds a value. Keep your `.env` files out of git as before.
+4. **Commit** `arca.json`, `package.json`, `AGENTS.md` and `.claude/settings.json` (if init added deny rules). None of them holds a value. Keep your `.env` files out of git as before.
 
 5. **Teammates** pull, run `npm install` and `npm run dev`. arca names the missing variables, and `npx arca setup` asks for each one. For variables with `"generate"` in `arca.json`, it offers a random value instead.
 
