@@ -2,7 +2,9 @@
 // tarball into a tiny project (with a space in its path), then run arca through npm
 // scripts and npm exec. Catches what the unit tests can't: the `files` list, the bin
 // shim (.cmd on Windows), the console guard preloaded from node_modules, the native
-// keyring binding installing, and the package exports.
+// keyring binding installing, and the package exports. The dev script starts a dependency's
+// own command, like `arca run -- next dev`, so `arca run` has to find that package manager's
+// shim for it (.cmd from npm and pnpm, .exe from bun on Windows, yarn 4's temp bin folder).
 //
 // Run with `npm run build && npm run smoke`. Add `-- --pnpm`, `-- --yarn` (yarn 1),
 // `-- --yarn-berry` (yarn 4, Plug'n'Play) or `-- --bun` to install and run it with that package
@@ -105,7 +107,11 @@ async function arcaApi() {
   return api
 }
 
-const APP = `// Replaces console.log the way dev tools do (TanStack Devtools' console piping),
+// The dev server stand-in: a local dependency with a bin, so the dev script runs a command the
+// package manager installed, not `node` itself.
+const DEV_BIN = 'smoke-dev-server'
+const APP = `#!/usr/bin/env node
+// Replaces console.log the way dev tools do (TanStack Devtools' console piping),
 // to check that the console guard runs before any wrapper sees the arguments.
 const { writeFileSync } = require('node:fs')
 const captured = []
@@ -140,12 +146,18 @@ try {
     mkdirSync(project)
     writeFileSync(
       join(project, 'package.json'),
-      JSON.stringify({ name: 'arca-smoke', private: true, packageManager, scripts: { dev: 'arca run -- node app.js' } }, null, 2),
+      JSON.stringify(
+        { name: 'arca-smoke', private: true, packageManager, scripts: { dev: `arca run -- ${DEV_BIN}` }, devDependencies: { [DEV_BIN]: `file:./${DEV_BIN}` } },
+        null,
+        2,
+      ),
     )
     // Yarn 4 wants a lockfile to know where the project starts.
     if (pm === 'yarn-berry') writeFileSync(join(project, 'yarn.lock'), '')
     writeFileSync(join(project, 'arca.json'), JSON.stringify({ id: 'arc_smoketest', name: 'arca-smoke', vars: { API_KEY: { required: true } } }, null, 2))
-    writeFileSync(join(project, 'app.js'), APP)
+    mkdirSync(join(project, DEV_BIN))
+    writeFileSync(join(project, DEV_BIN, 'package.json'), JSON.stringify({ name: DEV_BIN, version: '1.0.0', bin: { [DEV_BIN]: 'server.js' } }, null, 2))
+    writeFileSync(join(project, DEV_BIN, 'server.js'), APP)
     // yarn and bun take a relative `file:` spec more reliably than a Windows absolute path.
     // The name is unique per run: yarn 1 caches a `file:` tarball by its path, so a fixed name
     // would install a previous run's build.
@@ -197,7 +209,7 @@ try {
     check(!out.includes(SECRET), 'arca set printed the secret', out)
   })
 
-  await step(`\`${pm} run dev\` injects the secret and masks it everywhere`, async () => {
+  await step(`\`${pm.replace('-berry', '')} run dev\` starts a dependency's command, injects the secret and masks it everywhere`, async () => {
     const r = tool(['run', 'dev'], await cleanEnv())
     check(r.code === 0, `${pm} run dev failed`, r.out)
     check(r.out.includes('secret-ok=true'), 'the secret was not injected', r.out)
@@ -220,7 +232,7 @@ try {
   })
 
   await step(`an AI agent is refused an ad-hoc \`${shown(['arca', 'run'])}\``, async () => {
-    const r = exec(['arca', 'run', '--', 'node', 'app.js'], await cleanEnv({ CLAUDECODE: '1' }))
+    const r = exec(['arca', 'run', '--', DEV_BIN], await cleanEnv({ CLAUDECODE: '1' }))
     check(r.code !== 0, 'the ad-hoc run was allowed', r.out)
     check(r.out.includes('AI agents can only use secrets through package.json scripts'), 'expected the agent refusal', r.out)
     check(!r.out.includes(SECRET), 'the secret appeared in the output', r.out)
