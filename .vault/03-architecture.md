@@ -181,10 +181,10 @@ The invocation (`{ kind: 'script', name, verified, reason? }` or `{ kind: 'adhoc
 **Agent detection (layered, cheapest first):**
 
 1. Explicit: `ARCA_AGENT=1` (users can set it in an agent's config, e.g. Claude Code's `env` setting) or the cross-tool standard `AI_AGENT=<name>`. A value other than `1`/`true` names the agent (`AI_AGENT=claude-code_2-1_agent` → `claude-code`). Values like `0`, `false` or `off` don't count.
-2. Known markers, in a list vendored in `src/context.ts` (based on `@vercel/detect-agent`, not a dependency): `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`, `CODEX_SANDBOX`, `CODEX_THREAD_ID`, `GEMINI_CLI`, `OPENCODE`, `AUGMENT_AGENT`, `CLINE_ACTIVE`, `GOOSE_TERMINAL`, `REPL_ID`. Only Claude Code's are verified so far (Spike S3). A user list from `config.json#agentMarkers` is merged in.
+2. Known markers, in a list vendored in `src/context.ts` (based on `@vercel/detect-agent`, not a dependency): `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT`, `CURSOR_AGENT`, `CODEX_THREAD_ID`, `CODEX_CI`, `CODEX_SANDBOX`, `COPILOT_AGENT`, `COPILOT_CLI`, `GEMINI_CLI`, `OPENCODE`, `AUGMENT_AGENT`, `CLINE_ACTIVE`, `GOOSE_TERMINAL`, `REPL_ID`. Claude Code's checked by running it; the others read from each tool's source or bundle (Spike S3, 2026-11-06, see [06](06-roadmap.md)). A user list from `config.json#agentMarkers` is merged in.
 3. Phase 2: **process-tree inspection.** Walk parent PIDs and match known agent executables (`claude`, `codex`, `cursor-agent`, `gemini`, `opencode`, …). Markers can be stripped with `env -i` and the process tree can't, but it's slower (on Windows, query via `NtQueryInformationProcess` in a native helper or a cached WMI call), so run it only when a decision depends on it (reveal, ad-hoc run).
 
-**Watch for false positives:** some IDEs set variables in *every* integrated terminal (e.g. Cursor trace IDs). Only use markers specific to agent-launched processes. When a human is misdetected, the human gate's challenge (below) lets them through.
+**Watch for false positives:** some IDEs set variables in *every* integrated terminal (e.g. Cursor trace IDs, VS Code's `COPILOT_DEBUG_NONCE`, and the `CLAUDE_AGENT_SDK_VERSION` T3 Code's terminals inherit). Only use markers specific to agent-launched processes. When a human is misdetected, the human gate's challenge (below) lets them through.
 
 **Script verification** (for the default agent policy `scripts`):
 

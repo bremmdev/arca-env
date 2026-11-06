@@ -86,6 +86,44 @@ describe('agent detection', () => {
     expect(detectAgent({})).toEqual({ detected: false })
     expect(detectAgent({ MY_TOOL: '1' }, ['MY_TOOL'])).toMatchObject({ detected: true, via: 'MY_TOOL' })
   })
+
+  // What each tool sets on the commands its agent runs, read from its source (spike S3, 2026-11-06).
+  // A failure here means a marker change broke detection of an agent that was checked.
+  it.each([
+    ['Claude Code', { AI_AGENT: 'claude-code_2-1-306_agent', CLAUDECODE: '1', CLAUDE_CODE_ENTRYPOINT: 'cli' }, 'claude-code'],
+    ['Codex CLI on Windows and Linux', { CODEX_THREAD_ID: '0199a1b2-c3d4', CODEX_CI: '1' }, 'codex'],
+    ['Codex CLI on macOS', { CODEX_SANDBOX: 'seatbelt', CODEX_THREAD_ID: '0199a1b2-c3d4' }, 'codex'],
+    ['Cursor CLI agent', { CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'c-1', CURSOR_REQUEST_ID: 'r-1' }, 'cursor'],
+    // Seen from Cursor's IDE agent on Windows, 2026-11-06 (values made up): a hidden process, no terminal.
+    // Seen from Claude Code's VS Code extension on Windows, 2026-11-06: an extension-host process too.
+    ['Claude Code in VS Code', { CLAUDE_CODE_ENTRYPOINT: 'claude-vscode', CLAUDE_CODE_SESSION_ID: 's-1', VSCODE_PID: '1234', VSCODE_CWD: 'C:/x' }, 'claude-code'],
+    ['Cursor IDE agent', { AGENT_TRANSCRIPTS: 'x', CURSOR_AGENT: '1', CURSOR_CONVERSATION_ID: 'c-1', CURSOR_EXTENSION_HOST_ROLE: 'agent-exec', CURSOR_REQUEST_ID: 'r-1', VSCODE_PID: '1234', __CURSOR_SANDBOX_ENV_RESTORE: 'x' }, 'cursor'],
+    ['VS Code Copilot agent', { AI_AGENT: 'github_copilot_vscode_agent', COPILOT_AGENT: '1', TERM_PROGRAM: 'vscode' }, 'github-copilot-vscode'],
+    ['Copilot CLI', { COPILOT_CLI: '1', COPILOT_AGENT_SESSION_ID: 's-1' }, 'github-copilot-cli'],
+    ['Gemini CLI', { GEMINI_CLI: '1', TERM: 'xterm-256color' }, 'gemini-cli'],
+    ['OpenCode', { AGENT: '1', OPENCODE: '1', AI_AGENT: 'opencode', OPENCODE_SESSION_ID: 'ses_1' }, 'opencode'],
+    ['Augment (auggie)', { AUGMENT_AGENT: '1' }, 'augment'],
+    ['Cline', { CLINE_ACTIVE: 'true' }, 'cline'],
+    ['Goose', { GOOSE_TERMINAL: '1', AGENT: 'goose' }, 'goose'],
+  ])('detects %s', (_tool, env, name) => {
+    expect(detectAgent(env)).toMatchObject({ detected: true, name })
+  })
+
+  // What IDEs set in every terminal, a person's too. None of it may count as an agent.
+  it.each([
+    // Seen in a person's VS Code terminal (Git Bash) on Windows, 2026-11-06 (values made up).
+    ['VS Code', { COPILOT_DEBUG_NONCE: 'n-1', TERM_PROGRAM: 'vscode', TERM_PROGRAM_VERSION: '1.106.0', VSCODE_GIT_ASKPASS_MAIN: 'askpass.js', VSCODE_GIT_IPC_HANDLE: 'git-ipc', VSCODE_PYTHON_AUTOACTIVATE_GUARD: '1' }],
+    // Seen in a person's Cursor terminal on Windows, 2026-11-06 (values made up).
+    ['Cursor', { TERM_PROGRAM: 'vscode', TERM_PROGRAM_VERSION: '2.0.0', VSCODE_GIT_ASKPASS_MAIN: 'askpass.js', VSCODE_GIT_IPC_AUTH_TOKEN: 'x', VSCODE_GIT_IPC_HANDLE: '\\\\.\\pipe\\git', VSCODE_INJECTION: '1' }],
+    // Vercel's detector reads it as Cursor; older Cursor versions may set it in every terminal.
+    ['Cursor (CURSOR_TRACE_ID)', { TERM_PROGRAM: 'vscode', CURSOR_TRACE_ID: 't-1' }],
+    ['OpenCode desktop', { OPENCODE_CLIENT: 'desktop' }],
+    // Seen in a person's T3 Code terminal on Windows, 2026-11-06: the app's Claude Agent SDK leaks into it.
+    ['T3 Code', { CLAUDE_AGENT_SDK_VERSION: '0.2.0' }],
+    ['a terminal that sets AI_AGENT=0', { AI_AGENT: '0', COPILOT_AGENT: 'false' }],
+  ])("doesn't flag a person in %s", (_ide, env) => {
+    expect(detectAgent(env)).toEqual({ detected: false })
+  })
 })
 
 describe('script verification', () => {

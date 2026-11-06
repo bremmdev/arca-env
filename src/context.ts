@@ -28,16 +28,25 @@ export interface Context {
 /**
  * Env vars that agent tools set in the commands they run. Order matters: the first hit names
  * the agent. Only markers specific to agent-launched processes belong here, not ones an IDE
- * sets in every terminal (those would lock humans out). To verify per tool in spike S3.
+ * sets in every terminal (those would lock humans out): not Cursor's CURSOR_TRACE_ID, VS Code's
+ * TERM_PROGRAM or COPILOT_DEBUG_NONCE, OpenCode's OPENCODE_CLIENT, or the CLAUDE_AGENT_SDK_VERSION
+ * that T3 Code's terminals inherit. Checked against each tool's source and real terminals (spike S3).
  */
 export const AGENT_MARKERS: { env: string; name: string }[] = [
   { env: 'ARCA_AGENT', name: 'agent' },
+  // Claude Code, OpenCode (`opencode`) and VS Code's Copilot agent (`github_copilot_vscode_agent`).
   { env: 'AI_AGENT', name: 'agent' },
   { env: 'CLAUDECODE', name: 'claude-code' },
   { env: 'CLAUDE_CODE_ENTRYPOINT', name: 'claude-code' },
+  // Cursor's agent, on every command it runs.
   { env: 'CURSOR_AGENT', name: 'cursor' },
-  { env: 'CODEX_SANDBOX', name: 'codex' },
+  // Codex sets the thread ID on every command, after the user's env filters. CODEX_SANDBOX only on macOS.
   { env: 'CODEX_THREAD_ID', name: 'codex' },
+  { env: 'CODEX_CI', name: 'codex' },
+  { env: 'CODEX_SANDBOX', name: 'codex' },
+  // VS Code's hidden agent terminals (next to AI_AGENT), and the Copilot CLI (from its changelog).
+  { env: 'COPILOT_AGENT', name: 'github-copilot' },
+  { env: 'COPILOT_CLI', name: 'github-copilot-cli' },
   { env: 'GEMINI_CLI', name: 'gemini-cli' },
   { env: 'OPENCODE', name: 'opencode' },
   { env: 'AUGMENT_AGENT', name: 'augment' },
@@ -53,14 +62,22 @@ export function detectAgent(env: NodeJS.ProcessEnv, extraMarkers: string[] = [])
   for (const m of markers) {
     const v = env[m.env]
     if (v === undefined || FALSY.has(v.trim().toLowerCase())) continue
-    // AI_AGENT / ARCA_AGENT may carry the agent's name, e.g. AI_AGENT=claude-code_2-1_agent.
     let name = m.name
-    if ((m.env === 'AI_AGENT' || m.env === 'ARCA_AGENT') && v !== '1' && v.toLowerCase() !== 'true') {
-      name = v.split(/[_\s]/)[0] || m.name
-    }
+    if ((m.env === 'AI_AGENT' || m.env === 'ARCA_AGENT') && v !== '1' && v.toLowerCase() !== 'true') name = agentName(v) || m.name
     return { detected: true, name, via: m.env }
   }
   return { detected: false }
+}
+
+/**
+ * The agent's name from an AI_AGENT value: `claude-code_2-1-306_agent` → `claude-code`,
+ * `github_copilot_vscode_agent` → `github-copilot-vscode`, `opencode` → `opencode`.
+ * Drops version parts (they start with a digit) and the `agent` suffix.
+ */
+function agentName(value: string): string {
+  const parts = value.trim().toLowerCase().split(/[_\s]+/).filter((p) => p && !/^\d/.test(p))
+  if (parts.length > 1 && parts.at(-1) === 'agent') parts.pop()
+  return parts.join('-')
 }
 
 const CI_VARS = ['CI', 'CONTINUOUS_INTEGRATION', 'BUILD_NUMBER', 'GITHUB_ACTIONS', 'GITLAB_CI', 'VERCEL', 'NETLIFY', 'BUILDKITE', 'CIRCLECI', 'TF_BUILD', 'CODEBUILD_BUILD_ID', 'BITBUCKET_BUILD_NUMBER', 'CF_PAGES', 'RENDER', 'RAILWAY_ENVIRONMENT']

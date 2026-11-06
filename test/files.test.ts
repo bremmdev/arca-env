@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { chmodSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -88,38 +88,47 @@ describe.runIf(process.platform === 'linux')('file permissions (Linux)', () => {
   })
 })
 
-/** Opens `file` the way antivirus and indexers do: no delete sharing, so a rename over it fails. */
-async function holdOpen(file: string, ms: number) {
-  const script = `$f = [IO.File]::Open('${file.replaceAll("'", "''")}', 'Open', 'Read', 'Read'); 'locked'; [Threading.Thread]::Sleep(${ms}); $f.Close()`
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: ['ignore', 'pipe', 'inherit'] })
+/**
+ * Opens `file` the way antivirus and indexers do: no delete sharing, so a rename over it fails.
+ * cmd.exe holds it on a redirected handle 9 while `ping` waits about `seconds` (one second
+ * between echoes). Not PowerShell: its cold start on a CI runner once took over 20 seconds.
+ * Returns the function that releases it.
+ */
+async function holdOpen(file: string, seconds: number): Promise<() => void> {
+  const command = `"(echo locked& ping -n ${seconds + 1} 127.0.0.1 >nul) 9>>"${file}""`
+  const child = spawn('cmd.exe', ['/d', '/s', '/c', command], { windowsVerbatimArguments: true, stdio: ['ignore', 'pipe', 'inherit'] })
   await new Promise<void>((resolve, reject) => {
     child.stdout.on('data', (d: Buffer) => d.toString().includes('locked') && resolve())
     child.on('exit', (code) => reject(new Error(`holder exited early (${code})`)))
   })
-  return child
+  // The whole tree: ping may have inherited the handle.
+  return () => void spawnSync('taskkill', ['/T', '/F', '/PID', String(child.pid)], { stdio: 'ignore' })
 }
 
 describe.runIf(process.platform === 'win32')('writes while another program holds the file (Windows)', () => {
-  it('retries a rename blocked for a few hundred milliseconds, then succeeds', async () => {
+  it('retries a rename blocked for about a second, then succeeds', async () => {
     const file = join(tempDir(), 'vault.json')
     writeFileSync(file, 'old')
-    const holder = await holdOpen(file, 300) // longer than the old 200 ms retry window
-    atomicWrite(file, 'new')
-    expect(readFileSync(file, 'utf8')).toBe('new')
-    holder.kill()
+    const release = await holdOpen(file, 1) // longer than the old 200 ms retry window, within the 2 s one
+    try {
+      atomicWrite(file, 'new')
+      expect(readFileSync(file, 'utf8')).toBe('new')
+    } finally {
+      release()
+    }
   }, 20_000)
 
   it('gives up on a file held for long, keeping the old content and no temp file', async () => {
     const dir = tempDir()
     const file = join(dir, 'vault.json')
     writeFileSync(file, 'old')
-    const holder = await holdOpen(file, 5000)
+    const release = await holdOpen(file, 5)
     try {
       expect(() => atomicWrite(file, 'new')).toThrow(/EPERM|EBUSY|EACCES/)
       expect(readFileSync(file, 'utf8')).toBe('old')
       expect(readdirSync(dir)).toEqual(['vault.json'])
     } finally {
-      holder.kill()
+      release()
     }
   }, 20_000)
 })

@@ -201,7 +201,7 @@ The **leak guard** checks your `.env*` files on every run. It warns when one con
 
 ## How agents are recognised
 
-Agent tools set environment variables in the commands they run: `AI_AGENT` (a shared convention), `CLAUDECODE`, `CURSOR_AGENT`, `CODEX_SANDBOX`, `GEMINI_CLI`, `OPENCODE` and others. You can add your own markers in the store's `config.json` (`"agentMarkers": ["MY_AGENT"]`), or set `ARCA_AGENT=1` in an agent's config.
+Agent tools set environment variables in the commands they run: `AI_AGENT` (a shared convention), `CLAUDECODE`, `CURSOR_AGENT`, `CODEX_THREAD_ID`, `COPILOT_AGENT`, `GEMINI_CLI`, `OPENCODE` and others. You can add your own markers in the store's `config.json` (`"agentMarkers": ["MY_AGENT"]`), or set `ARCA_AGENT=1` in an agent's config.
 
 For a detected agent, `arca run` checks that it was started by a `package.json` script whose text matches the file, and that the command is the one in the script. Callers with no marker and no terminal (IDE tasks, git hooks) can run anything, masked. Showing or changing values needs a real terminal and no agent marker. If a marker leaks into your own terminal, arca asks you to type a short code instead.
 
