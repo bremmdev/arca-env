@@ -11,7 +11,7 @@ import { humanGate } from '../policy.js'
 import { Session } from '../session.js'
 import { plural } from '../util.js'
 import { addDevCommand, arca } from '../hint.js'
-import { CLAUDE_SETTINGS, DENIED_COMMANDS, addDenyRules, claudeDenyRules, missingDenyRules, usesClaudeCode } from '../agent-rules.js'
+import { DENIED_LIST, RULE_TARGETS } from '../agent-rules.js'
 import { storeValue } from './values.js'
 
 export const KNOWN_TOOLS = new Set([
@@ -265,17 +265,23 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
     ok(`Updated the "Secrets (arca)" section in ${outdated.join(' and ')}`)
   }
 
-  // 5b. Claude Code deny rules, where the project uses Claude Code.
-  if (usesClaudeCode(root) || s.ctx.agent.name === 'claude-code') {
-    const missing = missingDenyRules(root, claudeDenyRules(arca()))
-    const commands = `${DENIED_COMMANDS.slice(0, -1).join(', ')} or ${DENIED_COMMANDS.at(-1)}`
-    if (missing === null) {
-      s.note(s.err('yellow', `⚠ ${CLAUDE_SETTINGS} isn't valid JSON, so Claude Code ignores it, and arca left it alone. Fix it and run \`${arca()} init\` again to add deny rules for arca.`))
-    } else if (missing.length === 0) {
-      step(`Claude Code deny rules for arca are in ${CLAUDE_SETTINGS}`)
-    } else if (await ask(`Add deny rules to ${CLAUDE_SETTINGS}, so Claude Code doesn't try \`arca ${commands}\`? (arca refuses those for agents anyway)`, true)) {
-      addDenyRules(root, missing)
-      ok(`Added ${plural(missing.length, 'deny rule')} to ${CLAUDE_SETTINGS}: Claude Code won't try arca ${commands}, or read the store`)
+  // 5b. Deny rules for the agent tools this project uses (and the one running init).
+  const targets = RULE_TARGETS.filter((t) => t.used(root) || s.ctx.agent.name === t.detectedAs).map((t) => ({ t, plan: t.plan(root, arca()) }))
+  for (const { t, plan } of targets) {
+    if (plan.kind === 'invalid') {
+      const ignored = t.agent === 'Claude Code' ? ', so Claude Code ignores it, and arca left it alone' : ', so arca left it alone'
+      s.note(s.err('yellow', `⚠ ${t.file} isn't valid JSON${ignored}. Fix it and run \`${arca()} init\` again to add deny rules for arca.`))
+    } else if (plan.kind === 'current') step(`${t.agent} deny rules for arca are in ${t.file}`)
+  }
+  const toAdd = targets.flatMap(({ t, plan }) => (plan.kind === 'add' ? [{ t, count: plan.count }] : []))
+  if (toAdd.length) {
+    const agents = toAdd.map((x) => x.t.agent)
+    const names = agents.length === 1 ? agents[0] : `${agents.slice(0, -1).join(', ')} and ${agents.at(-1)}`
+    if (await ask(`Add deny rules for ${names} (${toAdd.map((x) => x.t.file).join(', ')}), so ${agents.length === 1 ? 'it doesn\'t' : 'they don\'t'} try \`arca ${DENIED_LIST}\`? (arca refuses those for agents anyway)`, true)) {
+      for (const { t, count } of toAdd) {
+        t.apply(root, arca())
+        ok(t.done(count))
+      }
     }
   }
 

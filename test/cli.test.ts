@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { codexRules } from '../src/agent-rules.js'
 import { main } from '../src/main.js'
 import { PASSPHRASE, cleanEnv, fakeIO, harness, tempDir, tempStore, writeJson, type Harness } from './helpers.js'
 
@@ -308,7 +309,7 @@ describe('teammates, CI and edge cases', () => {
 
 void mkdirSync
 
-describe('Claude Code deny rules from init', () => {
+describe('agent deny rules from init', () => {
   const settingsOf = (h: Harness) => JSON.parse(readFileSync(join(h.dir, '.claude', 'settings.json'), 'utf8'))
 
   it("an agent-run init in Claude Code adds them, for the project's package manager", async () => {
@@ -355,6 +356,31 @@ describe('Claude Code deny rules from init', () => {
     expect(code).toBe(0)
     expect(io.err()).toContain(".claude/settings.json isn't valid JSON, so Claude Code ignores it")
     expect(readFileSync(join(h.dir, '.claude', 'settings.json'), 'utf8')).toBe(broken)
+  })
+
+  it("an init Codex runs writes its rule file, and a rerun finds it current", async () => {
+    const h = harness()
+    writeJson(join(h.dir, 'package.json'), { name: 'app' })
+    const { code, io } = await h.task(['init'], { env: { CODEX_THREAD_ID: 't-1' } })
+    expect(code).toBe(0)
+    expect(io.err()).toContain('Wrote .codex/rules/arca.rules')
+    const rules = readFileSync(join(h.dir, '.codex', 'rules', 'arca.rules'), 'utf8')
+    expect(rules).toBe(codexRules())
+    expect(rules).toContain('pattern = [["npx", "pnpm", "yarn", "bun", "bunx"], "arca", ["reveal", "export", "set", "import"]]')
+    expect(existsSync(join(h.dir, '.claude'))).toBe(false) // Codex isn't Claude Code
+    const again = await h.task(['init'], { env: { CODEX_THREAD_ID: 't-1' } })
+    expect(again.io.err()).toContain('Codex deny rules for arca are in .codex/rules/arca.rules')
+  })
+
+  it('asks once for every tool the project uses', async () => {
+    const h = harness()
+    writeJson(join(h.dir, 'package.json'), { name: 'app' })
+    mkdirSync(join(h.dir, '.claude'))
+    mkdirSync(join(h.dir, '.codex'))
+    const { code, io } = await h.human(['init'], { answers: { text: ['app'], confirm: [false, true] } }) // AGENTS.md: no, deny rules: yes
+    expect(code).toBe(0)
+    expect(io.err()).toContain('Added 18 deny rules to .claude/settings.json')
+    expect(io.err()).toContain('Wrote .codex/rules/arca.rules')
   })
 
   it("isn't offered where nothing points to Claude Code, and can be declined", async () => {
