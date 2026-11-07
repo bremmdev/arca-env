@@ -398,6 +398,78 @@ describe('agent deny rules from init', () => {
   })
 })
 
+describe('init in a Cloudflare project', () => {
+  const astroOnCloudflare = (h: Harness, scripts: Record<string, string>) => {
+    writeJson(join(h.dir, 'package.json'), { name: 'cf-app', dependencies: { astro: '7.4.7', '@astrojs/cloudflare': '14.4.6' }, scripts })
+    writeFileSync(join(h.dir, '.env'), `STRIPE_SECRET_KEY=${STRIPE}\nDATABASE_URL=${DB}\nPORT=4321\n`)
+  }
+  const WRANGLER = '{\n  // the Worker\n  "name": "cf-app",\n  "compatibility_date": "2026-11-01"\n}\n'
+
+  it('declares the secrets in the Wrangler config and leaves the build unwrapped', async () => {
+    const h = harness()
+    astroOnCloudflare(h, { dev: 'astro dev', build: 'astro build', preview: 'astro preview' })
+    writeFileSync(join(h.dir, 'wrangler.jsonc'), WRANGLER)
+    const { code, io } = await h.agent(['init'])
+    expect(code).toBe(0)
+    const pkg = JSON.parse(readFileSync(join(h.dir, 'package.json'), 'utf8'))
+    expect(pkg.scripts).toEqual({ dev: 'arca run -- astro dev', build: 'astro build', preview: 'arca run -- astro preview' })
+    expect(io.err()).toContain('build: Cloudflare build, left alone')
+    expect(io.err()).toContain('arca run -- astro preview')
+    expect(readFileSync(join(h.dir, 'wrangler.jsonc'), 'utf8')).toBe(
+      '{\n  // the Worker\n  "name": "cf-app",\n  "compatibility_date": "2026-11-01",\n  "secrets": { "required": ["STRIPE_SECRET_KEY", "DATABASE_URL"] }\n}\n',
+    )
+    expect(io.err()).toContain('Declared 2 secrets in wrangler.jsonc (secrets.required)')
+    expect(io.all()).not.toContain(STRIPE)
+
+    const again = await h.agent(['init'])
+    expect(again.io.err()).toContain('wrangler.jsonc declares the secrets (secrets.required)')
+  })
+
+  it('declares only the names you pick, and warns about .dev.vars and env sections', async () => {
+    const h = harness()
+    astroOnCloudflare(h, { dev: 'astro dev', build: 'astro build' })
+    writeFileSync(join(h.dir, 'wrangler.json'), '{ "name": "cf-app", "env": { "staging": {} } }\n')
+    writeFileSync(join(h.dir, '.dev.vars'), 'OTHER=1\n')
+    const { code, io } = await h.human(['init'], {
+      answers: {
+        text: ['cf-app'],
+        // secrets, scripts to wrap (build isn't preselected), secrets to declare
+        multiselect: [['STRIPE_SECRET_KEY', 'DATABASE_URL'], ['dev'], ['STRIPE_SECRET_KEY']],
+        confirm: [false], // AGENTS.md
+      },
+    })
+    expect(code).toBe(0)
+    expect(JSON.parse(readFileSync(join(h.dir, 'wrangler.json'), 'utf8')).secrets).toEqual({ required: ['STRIPE_SECRET_KEY'] })
+    expect(io.err()).toContain('Declared 1 secret in wrangler.json')
+    expect(io.err()).toContain("env.staging doesn't inherit secrets")
+    expect(io.err()).toContain(".dev.vars exists, so Wrangler reads only that file and ignores arca's values")
+  })
+
+  it('appends to wrangler.toml, and warns about a build that is already wrapped', async () => {
+    const h = harness()
+    astroOnCloudflare(h, { dev: 'arca run -- astro dev', build: 'arca run -- astro build' })
+    writeFileSync(join(h.dir, 'wrangler.toml'), 'name = "cf-app"\n')
+    const { code, io } = await h.agent(['init'])
+    expect(code).toBe(0)
+    expect(readFileSync(join(h.dir, 'wrangler.toml'), 'utf8')).toBe('name = "cf-app"\n\n[secrets]\nrequired = ["STRIPE_SECRET_KEY", "DATABASE_URL"]\n')
+    expect(io.err()).toContain('build is wrapped with arca run: with the secrets declared, the Cloudflare Vite plugin copies them into dist as .dev.vars')
+  })
+
+  it("points to a Wrangler config when there's none, and leaves other projects alone", async () => {
+    const h = harness()
+    astroOnCloudflare(h, { dev: 'astro dev', build: 'astro build' })
+    const { io } = await h.agent(['init'])
+    expect(io.err()).toContain('No Wrangler config here. To pass arca\'s secrets to your Worker in dev, add "secrets": { "required": ["STRIPE_SECRET_KEY", "DATABASE_URL"] } to a wrangler.jsonc')
+
+    const plain = harness()
+    writeJson(join(plain.dir, 'package.json'), { name: 'app', dependencies: { astro: '7.4.7' }, scripts: { build: 'astro build' } })
+    writeFileSync(join(plain.dir, '.env'), `STRIPE_SECRET_KEY=${STRIPE}\n`)
+    const other = await plain.agent(['init'])
+    expect(JSON.parse(readFileSync(join(plain.dir, 'package.json'), 'utf8')).scripts.build).toBe('arca run -- astro build')
+    expect(other.io.err()).not.toMatch(/Wrangler|Cloudflare/)
+  })
+})
+
 describe('version', () => {
   it('reports the version in package.json', async () => {
     const { version } = JSON.parse(readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8')) as { version: string }

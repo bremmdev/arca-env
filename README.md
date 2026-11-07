@@ -50,7 +50,7 @@ The usual starting point: a `.env.local` (or `.env`) that mixes secrets (`DATABA
    npx arca init
    ```
 
-   It asks for the project name, then which variables are secrets. The ones that look like secrets are preselected; public names such as `NEXT_PUBLIC_*` aren't. Secrets move into arca, everything else stays in your `.env` files as config, and both are declared in `arca.json` (names only). Each `.env.<name>` file, such as `.env.staging`, is offered as a [profile](#profiles). Then it asks which scripts to wrap with `arca run`. `start` stays unwrapped for production, and you're offered a `start:local` that runs the production build with your secrets. Finally it offers a short "Secrets (arca)" section for `AGENTS.md`, and deny rules for the agent tools the project uses, so they don't try `arca reveal`, `export`, `set` or `import`: Claude Code (`.claude/settings.json`, when there's a `.claude` folder or `CLAUDE.md`) and Codex (`.codex/rules/arca.rules`, when there's a `.codex` folder). arca refuses those commands for agents anyway; the rules make the agent ask you straight away. The secret values are copied into arca, and your `.env` files aren't changed. The first copy creates the master key: in your OS keychain, or [behind a passphrase](#where-things-are-kept) on WSL and headless Linux.
+   It asks for the project name, then which variables are secrets. The ones that look like secrets are preselected; public names such as `NEXT_PUBLIC_*` aren't. Secrets move into arca, everything else stays in your `.env` files as config, and both are declared in `arca.json` (names only). Each `.env.<name>` file, such as `.env.staging`, is offered as a [profile](#profiles). Then it asks which scripts to wrap with `arca run`. `start` stays unwrapped for production, and you're offered a `start:local` that runs the production build with your secrets. In a Cloudflare project with a Wrangler config, it then offers to declare the secrets in it (see [Framework notes](#framework-notes)). Finally it offers a short "Secrets (arca)" section for `AGENTS.md`, and deny rules for the agent tools the project uses, so they don't try `arca reveal`, `export`, `set` or `import`: Claude Code (`.claude/settings.json`, when there's a `.claude` folder or `CLAUDE.md`) and Codex (`.codex/rules/arca.rules`, when there's a `.codex` folder). arca refuses those commands for agents anyway; the rules make the agent ask you straight away. The secret values are copied into arca, and your `.env` files aren't changed. The first copy creates the master key: in your OS keychain, or [behind a passphrase](#where-things-are-kept) on WSL and headless Linux.
 
 2. **Check it works:** `npm run dev` starts with an `arca ▸ … output masked` line and your app behaves as before. `npx arca list` shows where each variable now comes from, and `npx arca doctor` checks the whole setup. Until the next step, the leak guard warns that the secrets are still in your `.env` files. That's expected.
 
@@ -62,7 +62,7 @@ The usual starting point: a `.env.local` (or `.env`) that mixes secrets (`DATABA
 
    This removes only the entries that were imported. Config lines and comments stay, and a file is deleted only if nothing else was in it.
 
-4. **Commit** `arca.json`, `package.json`, `AGENTS.md`, and the agent rule files if init added them. None of them holds a value. Keep your `.env` files out of git as before.
+4. **Commit** `arca.json`, `package.json`, `AGENTS.md`, the Wrangler config, and the agent rule files if init changed them. None of them holds a value. Keep your `.env` files out of git as before.
 
 5. **Teammates** pull, run `npm install` and `npm run dev`. arca names the missing variables, and `npx arca setup` asks for each one. For variables with `"generate"` in `arca.json`, it offers a random value instead.
 
@@ -198,6 +198,11 @@ Output is masked with the values of **every** profile, so a `staging` connection
 Who wins when a name is in more than one place: **arca, then your shell, then `.env` files**. When arca overrides a different value from your shell, it says so (by name, never by value). `--no-override` flips that for one run.
 
 The **leak guard** checks your `.env*` files on every run. It warns when one contains a value stored in arca, a variable declared as a secret, or something that looks like a secret (`sk_live_…`, a URL with a password, a long random string). `arca doctor` shows details and the fix. `arca check --strict` makes it fail, for CI or a pre-commit hook.
+
+## Framework notes
+
+- **Astro:** read secrets through `astro:env` (`envField.string({ context: 'server', access: 'secret' })`) or `process.env`. `astro build` writes private `import.meta.env.X` values into `dist/server` as plain text.
+- **Cloudflare Workers** (`wrangler dev`, or Astro, TanStack Start, React Router or Nuxt on Cloudflare): Wrangler passes variables from the environment to your Worker only when the config declares them: `"secrets": { "required": ["STRIPE_SECRET_KEY"] }` in `wrangler.jsonc`. `arca init` offers to add the secrets from `arca.json` (comments in the file stay), and you pick which ones. `wrangler deploy` then checks that they're set on Cloudflare (`wrangler secret put NAME`). A `.dev.vars` file turns the lookup off, so move its secrets into arca and delete it. In projects that use Cloudflare's Vite plugin (`@cloudflare/vite-plugin`, `@astrojs/cloudflare`), `init` leaves `build` unwrapped: a build with the secrets declared copies them into `dist/server/.dev.vars`. Try a build with your secrets through `arca run -- astro preview` (or `vite preview`).
 
 ## How agents are recognised
 

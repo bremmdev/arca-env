@@ -12,6 +12,7 @@ import { Session } from '../session.js'
 import { plural } from '../util.js'
 import { addDevCommand, arca } from '../hint.js'
 import { DENIED_LIST, RULE_TARGETS } from '../agent-rules.js'
+import { declareSecrets, findWranglerConfig, planSecrets, usesCloudflareVitePlugin } from '../wrangler.js'
 import { storeValue } from './values.js'
 
 export const KNOWN_TOOLS = new Set([
@@ -22,6 +23,21 @@ export const KNOWN_TOOLS = new Set([
 
 /** The tool a script runs first (`next dev` → next, `npx prisma migrate` → prisma). Null for compound scripts. */
 export function firstCommand(script: string): string | null {
+  const t = commandTokens(script)?.[0]
+  return t ? basename(t) : null
+}
+
+/** Tools with a `build` subcommand that runs a Vite build (Cloudflare's Vite plugin hooks into those). */
+const VITE_BUILD_TOOLS = new Set(['vite', 'astro', 'react-router', 'remix', 'nuxt', 'nuxi', 'vinxi', 'tanstack', 'svelte-kit'])
+
+/** `astro build`, `npx vite build --mode x`: the subcommand is `build`. */
+export function isBuildScript(script: string): boolean {
+  const t = commandTokens(script)
+  return Boolean(t && VITE_BUILD_TOOLS.has(basename(t[0]!)) && t.slice(1).find((x) => !x.startsWith('-')) === 'build')
+}
+
+/** The script's words from the tool on, without `npx` / `pnpm exec`. Null for compound scripts. */
+function commandTokens(script: string): string[] | null {
   if (/&&|\|\||[;|<>]/.test(script)) return null
   const tokens = tokenize(script)
   let i = 0
@@ -29,7 +45,7 @@ export function firstCommand(script: string): string | null {
   if ((tokens[i] === 'pnpm' || tokens[i] === 'yarn') && tokens[i + 1] === 'exec') i += 2
   const t = tokens[i]
   if (!t || /^[A-Za-z_][A-Za-z0-9_]*=/.test(t) || t === 'cross-env') return null
-  return basename(t)
+  return tokens.slice(i)
 }
 
 interface Pkg {
@@ -192,13 +208,17 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
   }
 
   // 4. Wrap package.json scripts.
+  const deps = { ...pkg?.dependencies, ...pkg?.devDependencies }
+  // Builds through Cloudflare's Vite plugin copy declared secrets into dist, so they stay unwrapped.
+  const cloudflare = usesCloudflareVitePlugin(deps)
+  let wrappedBuilds: string[] = []
   if (pkg?.scripts) {
     const candidates = Object.entries(pkg.scripts).filter(([k, v]) => k !== 'start' && !/\barca\s+run\b/.test(v) && KNOWN_TOOLS.has(firstCommand(v) ?? ''))
-    let toWrap = candidates.map(([k]) => k)
+    let toWrap = candidates.filter(([, v]) => !(cloudflare && isBuildScript(v))).map(([k]) => k)
     if (candidates.length && interactive) {
       const picked = await io.prompts.multiselect(
         'Wrap these package.json scripts with `arca run`, so they get secrets?',
-        candidates.map(([k, v]) => ({ value: k, label: k, hint: v })),
+        candidates.map(([k, v]) => ({ value: k, label: k, hint: cloudflare && isBuildScript(v) ? `${v} (Cloudflare build: better left unwrapped)` : v })),
         toWrap,
       )
       if (picked === null) throw new ArcaError('arca: cancelled.')
@@ -217,8 +237,9 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
     const skipped = Object.entries(pkg.scripts).filter(([k]) => !wrappedNow.has(k))
     if (skipped.length) {
       step('Not wrapped:')
-      for (const [k, v] of skipped) s.note(s.err('dim', `    ${k}: ${skipReason(k, v, pkg.scripts, wrappedNow)}`))
+      for (const [k, v] of skipped) s.note(s.err('dim', `    ${k}: ${skipReason(k, v, pkg.scripts, wrappedNow, { cloudflare })}`))
     }
+    wrappedBuilds = [...wrappedNow].filter((k) => isBuildScript(pkg.scripts![k]!.replace(/^.*?\barca\s+run\b.*?\s--\s+/, '')))
 
     // `start` stays unwrapped for production; offer a local variant that gets the secrets.
     const start = pkg.scripts.start
@@ -230,6 +251,45 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
     }
   } else if (!pkg) {
     step('No package.json here. Wrap your commands yourself: arca run -- <command>')
+  }
+
+  // 4b. Cloudflare: Wrangler gives the Worker only the env vars its config declares as secrets.
+  const secretNames = Object.entries(parseProject(readFileSync(configFile, 'utf8'), configFile).config.vars).filter(([, d]) => isSensitive(d)).map(([k]) => k)
+  const wrangler = findWranglerConfig(root)
+  if (wrangler && secretNames.length) {
+    const plan = planSecrets(root, wrangler, secretNames)
+    let declared = plan.kind === 'current'
+    if (plan.kind === 'invalid') s.note(s.err('yellow', `⚠ ${wrangler} isn't valid JSON, or its secrets field isn't an object with a required list, so arca left it alone. To pass arca's secrets to your Worker, add them under secrets.required.`))
+    else if (plan.kind === 'current') step(`${wrangler} declares the secrets (secrets.required), so \`wrangler dev\` gets them from arca`)
+    else if (plan.kind === 'manual') s.note(s.err('yellow', `⚠ Add ${plan.missing.map((n) => `"${n}"`).join(', ')} to secrets.required in ${wrangler}, so \`wrangler dev\` passes them from arca to your Worker.`))
+    else {
+      let pick = plan.missing
+      if (interactive) {
+        const picked = await io.prompts.multiselect(
+          `Declare these secrets in ${wrangler} (secrets.required), so \`wrangler dev\` passes them from arca to your Worker? \`wrangler deploy\` then checks they're set on Cloudflare.`,
+          plan.missing.map((n) => ({ value: n, label: n })),
+          plan.missing,
+        )
+        if (picked === null) throw new ArcaError('arca: cancelled.')
+        pick = picked
+      }
+      if (pick.length) {
+        declareSecrets(root, wrangler, pick)
+        ok(`Declared ${plural(pick.length, 'secret')} in ${wrangler} (secrets.required): \`wrangler dev\` passes them from arca to your Worker, and \`wrangler deploy\` checks they're set on Cloudflare (\`wrangler secret put NAME\`)`)
+        declared = true
+      }
+    }
+    if (declared && plan.envs.length) {
+      step(`${plan.envs.map((e) => `env.${e}`).join(', ')} ${plan.envs.length === 1 ? "doesn't" : "don't"} inherit secrets: copy secrets.required there if you run \`wrangler dev --env <name>\``)
+    }
+    if (declared && cloudflare && wrappedBuilds.length) {
+      s.note(s.err('yellow', `⚠ ${wrappedBuilds.join(', ')} ${wrappedBuilds.length === 1 ? 'is' : 'are'} wrapped with arca run: with the secrets declared, the Cloudflare Vite plugin copies them into dist as .dev.vars. Unwrap ${wrappedBuilds.length === 1 ? 'it' : 'them'}, and try the build with \`arca run -- vite preview\` (or \`astro preview\`).`))
+    }
+  } else if (!wrangler && cloudflare && secretNames.length) {
+    step(`No Wrangler config here. To pass arca's secrets to your Worker in dev, add "secrets": { "required": [${secretNames.map((n) => `"${n}"`).join(', ')}] } to a wrangler.jsonc`)
+  }
+  if ((wrangler || cloudflare) && existsSync(join(root, '.dev.vars'))) {
+    s.note(s.err('yellow', `⚠ .dev.vars exists, so Wrangler reads only that file and ignores arca's values. Move its secrets into arca (\`${arca()} import .dev.vars\`), then delete it.`))
   }
 
   // 5. AGENTS.md / CLAUDE.md
@@ -286,7 +346,6 @@ export async function initCommand(s: Session, opts: InitOptions): Promise<number
   }
 
   // 6. Next steps
-  const deps = { ...pkg?.dependencies, ...pkg?.devDependencies }
   if (pkg && !deps['@bremmdev/arca-env']) s.note(`\nInstall arca in this project:  ${addDevCommand('@bremmdev/arca-env')}`)
   if (imported) {
     const withSecrets = plans.filter((p) => p.secrets.size > 0)
@@ -394,7 +453,7 @@ export function findSection(text: string, marker: string): { start: number; end:
 }
 
 /** Why `init` leaves a script unwrapped, in words a user can act on. */
-export function skipReason(name: string, script: string, scripts: Record<string, string>, wrapped: Set<string>): string {
+export function skipReason(name: string, script: string, scripts: Record<string, string>, wrapped: Set<string>, opts: { cloudflare?: boolean } = {}): string {
   if (name === 'start') {
     return 'production start, left alone on purpose (the host provides the env, and arca may not be installed there)'
   }
@@ -411,6 +470,10 @@ export function skipReason(name: string, script: string, scripts: Record<string,
   }
   const tool = firstCommand(script)
   if (tool === null) return 'sets env vars inline or uses cross-env, wrap by hand if it needs secrets'
+  if (opts.cloudflare && isBuildScript(script)) {
+    const preview = tool === 'astro' ? 'astro preview' : 'vite preview'
+    return `Cloudflare build, left alone: with secrets declared in the Wrangler config, the Cloudflare Vite plugin copies them into dist as .dev.vars. Try the build with secrets through arca run -- ${preview}`
+  }
   return `${tool} doesn't need secrets (wrap by hand if it does: arca run -- ${script})`
 }
 
