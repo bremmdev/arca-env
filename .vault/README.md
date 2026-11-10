@@ -49,7 +49,7 @@ Bypassing any of these takes deliberate effort, like stripping env markers, edit
 
 ✅ = confirmed by you on 2026-10-21. The full list with consequences is in [06](06-roadmap.md#decisions-confirmed-2026-10-21).
 
-1. **Wrapper injection (`arca run -- cmd`)** is the primary integration. It works with every framework, the way `op run`, `doppler run`, `dotenvx run` and `secretspec run` do. An in-process loader (`@bremmdev/arca-env/register`) comes second, for IDE runners (Phase 2, not built yet).
+1. **Wrapper injection (`arca run -- cmd`)** is the primary integration. It works with every framework, the way `op run`, `doppler run`, `dotenvx run` and `secretspec run` do. An in-process loader (`@bremmdev/arca-env/register`) comes second, for IDE runners and debuggers (built 2026-11-10).
 2. **Envelope encryption.** One random 256-bit master key goes in the OS keychain (`@napi-rs/keyring`). Each project gets an AES-256-GCM vault file in the user data directory. Individual secrets are *not* stored as keychain items, because Windows caps credential blobs at about 2.5 KB and macOS prompts per item.
 3. **No passphrase by default.** Unlocking is invisible, which keeps DX close to `.env`. The human gate only appears when someone tries to *reveal* or *change* values (a TTY check, plus an OS biometric prompt in Phase 2). Running the app never prompts.
 4. **A committed `arca.json` holds a stable project ID** plus the variable schema (names only, never values). Git worktrees and clones share secrets automatically. This matters because agent tools create worktrees all the time.
@@ -60,7 +60,7 @@ Bypassing any of these takes deliberate effort, like stripping env markers, edit
 9. ✅ **Import never deletes unless asked.** `arca import` leaves your files untouched. With `--delete`, it removes only the imported entries from the file, and removes the file only if nothing is left.
 10. **Graceful passthrough.** If there's no vault on the machine (CI, Vercel, Docker), `arca run` just executes the command and validates that required vars are present. Wrapped scripts never break deploys.
 11. ✅ **Profiles** (revised 2026-10-22). A project can have several local sets of values for the same variables, e.g. `ontwikkel` and `acceptatie`. `arca use acceptatie` switches every `arca run` in the project to that set until you switch back. A profile can `extend` another, so it only stores the values that differ. **All profiles are equal**: none is locked or more sensitive than another, and the normal rules (scripts only for agents, always masked, only humans change values) apply to each. See [07](07-profiles.md).
-12. ✅ **Published as one package, `@bremmdev/arca-env`, binary `arca`.** It exports `/schema.json` (a `/register` loader follows in Phase 2). TypeScript on Node ≥ 24, minimal dependencies, installed as a devDependency. The only required native dependency is the keychain binding, which ships prebuilt binaries.
+12. ✅ **Published as one package, `@bremmdev/arca-env`, binary `arca`.** It exports `/schema.json` and the `/register` loader. TypeScript on Node ≥ 24, minimal dependencies, installed as a devDependency. The only required native dependency is the keychain binding, which ships prebuilt binaries.
 
 ## Glossary
 

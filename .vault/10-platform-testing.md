@@ -100,6 +100,14 @@ The smoke test has no framework on purpose: framework installs are slow and a br
 - Everything binds to `127.0.0.1`, not `localhost`. In a Debian container `localhost` resolved to `::1` first, and neither the readiness probe nor TanStack's server-to-browser pipe got through (P11).
 - Locally: `npm run build && npm run frameworks` (or `-- next` for one). Without Google Chrome, `ARCA_FRAMEWORKS_CHANNEL=` plus `npx playwright-core install chromium`. Passed on Windows and in a `node:24` container before it went into CI.
 
+### Layer 6: VS Code (2026-11-10, Windows, run once, not in CI)
+
+The register loader exists for IDE test buttons and debuggers, so it was checked in a real VS Code (1.144, the installed one) with its own `--user-data-dir` and `--extensions-dir`: the Vitest (1.52.2), Jest (6.4.4) and Playwright (1.1.19) extensions and js-debug. A small driver extension (`@vscode/test-electron`'s `extensionTestsPath`, with the proposed `testObserver` API) ran each scenario through VS Code's own commands (`testing.runAll`, `debug.startDebugging`) and recorded what VS Code shows: test messages with their expected/actual fields, the Problems panel, and Debug Console output through a debug adapter tracker, plus screenshots of the window (`PrintWindow`, so only VS Code's own pixels). The secret lived in a store of its own with the real Credential Manager, the way people use it.
+
+Six workspaces, CommonJS projects like `create-next-app` makes: Vitest (forks), Vitest (threads), Jest (one file, in-band), Jest (two files, workers), Playwright, and the debugger (Debug Console and integrated terminal). Each test logs the secret, writes it to stdout, fails on it and throws with it, and never contains it.
+
+Found: the extensions showed the raw value (I12), worker threads had no masking (I13), Playwright's `error-context.md` (I14), and Debug Console locations pointing at arca (I15). After the fixes: the raw value appears nowhere in what VS Code shows or in any file the runs left in the workspaces, and every test got the secret. The harness lived in a temp folder. Turning it into `scripts/vscode.mjs` would make it repeatable; it needs a desktop session, so it can't run in CI as it is.
+
 ### Layer 4: local and manual testing on your machine
 
 **WSL (Ubuntu 24.04)** — yes, it's useful, for three things CI can't easily give you:

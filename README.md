@@ -199,6 +199,27 @@ Who wins when a name is in more than one place: **arca, then your shell, then `.
 
 The **leak guard** checks your `.env*` files on every run. It warns when one contains a value stored in arca, a variable declared as a secret, or something that looks like a secret (`sk_live_…`, a URL with a password, a long random string). `arca doctor` shows details and the fix. `arca check --strict` makes it fail, for CI or a pre-commit hook.
 
+## Test runners and debuggers
+
+Package scripts get secrets through `arca run`. Things that start Node themselves don't go through a script: the test buttons of the Vitest, Jest and Playwright extensions, a debugger started from `launch.json`, an IDE's "Run file". For those, load arca inside the process with `@bremmdev/arca-env/register`:
+
+| Where                  | How                                                                                    |
+| ---------------------- | -------------------------------------------------------------------------------------- |
+| Vitest                 | `import '@bremmdev/arca-env/register'` as the first line of `vitest.config.ts`         |
+| Jest                   | `require('@bremmdev/arca-env/register')` as the first line of `jest.config.js`         |
+| Playwright             | `import '@bremmdev/arca-env/register'` as the first line of `playwright.config.ts`     |
+| VS Code debugger       | `"runtimeArgs": ["--import", "@bremmdev/arca-env/register"]` in `launch.json`          |
+| Any other Node command | `node --import @bremmdev/arca-env/register app.js`, or the same flag in `NODE_OPTIONS` |
+
+It does inside the process what `arca run` does around it: the active profile's values go into `process.env` (arca wins over the environment), and stdout, stderr and `console` arguments are masked with the values of every profile. Node processes it starts, such as test workers, mask their own output too, and what a test worker reports to its runner is masked before it leaves the worker. So VS Code's Test Results, failure peeks (`Actual: [arca:API_KEY]`) and Problems panel show `[arca:NAME]`, the same as the Debug Console. Checked with the Vitest, Jest and Playwright extensions and the debugger in VS Code 1.144. Inside `arca run` it loads nothing, so keep your scripts wrapped: `npm test` still goes through `arca run`, and the IDE's test button goes through the config.
+
+- **Load it in the config, not in `setupFiles`.** Test workers can't mask what the runner's main process prints, such as failure messages (`Received: "…"`). In `setupFiles` it loads nothing and tells you where to put it.
+- **AI agents get nothing from it.** They use your package scripts, as before, and a run with an agent marker prints how.
+- **Passphrase mode** (WSL, headless Linux): without a terminal it can't ask for the passphrase, so an IDE run gets the secrets while the passphrase is remembered (12 hours after you last typed it).
+- Masking is per write. A value split over two writes, or written straight to the file descriptor, isn't masked. `arca run` doesn't have that gap.
+- Files your tests write aren't masked, with one exception, also under `arca run`: Playwright's `error-context.md` ("Context for AI"), which it writes into `test-results/` from the raw failure.
+- With `require()` (Jest, `node -r`, a Playwright config in a project without `"type": "module"`), the values are loaded by a short helper process: one extra Node startup per run.
+
 ## Framework notes
 
 - **Astro:** read secrets through `astro:env` (`envField.string({ context: 'server', access: 'secret' })`) or `process.env`. `astro build` writes private `import.meta.env.X` values into `dist/server` as plain text.
@@ -208,7 +229,7 @@ The **leak guard** checks your `.env*` files on every run. It warns when one con
 
 Agent tools set environment variables in the commands they run: `AI_AGENT` (a shared convention), `CLAUDECODE`, `CURSOR_AGENT`, `CODEX_THREAD_ID`, `COPILOT_AGENT`, `GEMINI_CLI`, `OPENCODE` and others. You can add your own markers in the store's `config.json` (`"agentMarkers": ["MY_AGENT"]`), or set `ARCA_AGENT=1` in an agent's config.
 
-For a detected agent, `arca run` checks that it was started by a `package.json` script whose text matches the file, and that the command is the one in the script. Callers with no marker and no terminal (IDE tasks, git hooks) can run anything, masked. Showing or changing values needs a real terminal and no agent marker. If a marker leaks into your own terminal, arca asks you to type a short code instead.
+For a detected agent, `arca run` checks that it was started by a `package.json` script whose text matches the file, and that the command is the one in the script. The [in-process loader](#test-runners-and-debuggers) loads nothing for an agent. Callers with no marker and no terminal (IDE tasks, git hooks) can run anything, masked. Showing or changing values needs a real terminal and no agent marker. If a marker leaks into your own terminal, arca asks you to type a short code instead.
 
 ## CI and deploys
 
@@ -237,11 +258,11 @@ If the keychain entry is lost, the vaults can't be decrypted. For local developm
 
 ## Limits
 
-arca can't stop deliberate workarounds: an agent that hides its markers, edits `package.json` to add a script that prints secrets (that shows in your git diff), or reads the keychain directly. It also can't stop malware running as you, or your own app reading `process.env`. Other output your app sends to the browser (an error overlay or page that shows a value) or writes to files isn't masked.
+arca can't stop deliberate workarounds: an agent that hides its markers, edits `package.json` to add a script that prints secrets (that shows in your git diff), or reads the keychain directly. It also can't stop malware running as you, or your own app reading `process.env`. Other output your app sends to the browser (an error overlay or page that shows a value) or writes to files isn't masked. The exception is Playwright's `error-context.md`, which it writes for AI agents to read.
 
 ## Status
 
-Usable today on Windows and Linux: everything above, including profiles and the passphrase cache. Checked daily against real Next.js and TanStack Start dev servers in a browser. Planned: a PTY mode for fully interactive tools, an in-process loader for IDE test runners, and `arca scan`.
+Usable today on Windows and Linux: everything above, including profiles and the passphrase cache. Checked daily against real Next.js and TanStack Start dev servers in a browser. Planned: a PTY mode for fully interactive tools, and `arca scan`.
 
 ## License
 

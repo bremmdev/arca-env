@@ -124,6 +124,25 @@ console.log('secret-ok=' + (process.env.API_KEY === ${JSON.stringify(SECRET)}))
 writeFileSync('captured.txt', captured.join('\\n'))
 `
 
+// For the register loader: what an IDE test run or a debugger starts, with a Node child process
+// that inherits stdout (so only the register loaded again through NODE_OPTIONS can mask it).
+// CommonJS, so it runs under both --import and -r.
+const REGISTER_APP = `const { spawnSync } = require('node:child_process')
+console.log('console:', process.env.API_KEY)
+process.stdout.write('stdout: ' + process.env.API_KEY + '\\n')
+console.log('secret-ok=' + (process.env.API_KEY === ${JSON.stringify(SECRET)}))
+spawnSync(process.execPath, ['-p', '"child: " + process.env.API_KEY'], { stdio: 'inherit' })
+`
+
+/** `node --import @bremmdev/arca-env/register …` (or `-r`). Plug'n'Play resolves packages only under `yarn node`. */
+function nodeWithRegister(flag, file, env) {
+  const args = [flag, '@bremmdev/arca-env/register', file]
+  if (pm === 'yarn-berry') return tool(['node', ...args], env)
+  const r = spawnSync(process.execPath, args, { cwd: project, env, encoding: 'utf8' })
+  if (r.error) throw r.error
+  return { code: r.status, stdout: r.stdout, out: r.stdout + r.stderr }
+}
+
 try {
   let tarball
   await step('npm pack', () => {
@@ -135,7 +154,7 @@ try {
     check(json, 'no JSON in the npm pack output', r.out)
     const [info] = JSON.parse(json[0])
     const files = info.files.map((f) => f.path)
-    for (const f of ['dist/cli.mjs', 'dist/index.mjs', 'dist/guard.mjs', 'schema.json']) {
+    for (const f of ['dist/cli.mjs', 'dist/index.mjs', 'dist/guard.mjs', 'dist/register.mjs', 'dist/register.cjs', 'dist/register-helper.mjs', 'dist/register.d.mts', 'dist/register.d.cts', 'schema.json']) {
       check(files.includes(f), `${f} is missing from the package. Run \`npm run build\` first.`)
     }
     tarball = join(root, info.filename)
@@ -223,6 +242,26 @@ try {
     const captured = readFileSync(join(project, 'captured.txt'), 'utf8')
     check(captured.includes('console: [arca:API_KEY]'), 'the wrapper did not see the masked value', captured)
     check(!captured.includes(SECRET), 'the wrapper saw the raw secret', captured)
+  })
+
+  for (const flag of ['--import', '-r']) {
+    await step(`\`node ${flag} @bremmdev/arca-env/register\` loads the secret and masks it, in child processes too`, async () => {
+      writeFileSync(join(project, 'register-app.cjs'), REGISTER_APP)
+      const r = nodeWithRegister(flag, 'register-app.cjs', await cleanEnv())
+      check(r.code === 0, 'the app failed', r.out)
+      check(r.out.includes('secret-ok=true'), 'the secret was not loaded', r.out)
+      for (const line of ['console: [arca:API_KEY]', 'stdout: [arca:API_KEY]', 'child: [arca:API_KEY]']) {
+        check(r.out.includes(line), `expected "${line}"`, r.out)
+      }
+      check(!r.out.includes(SECRET), 'the secret appeared in the output', r.out)
+    })
+  }
+
+  await step('the register loader loads nothing for an AI agent', async () => {
+    const r = nodeWithRegister('--import', 'register-app.cjs', await cleanEnv({ CLAUDECODE: '1' }))
+    check(r.code === 0 && r.out.includes('secret-ok=false'), 'the agent got the secret', r.out)
+    check(r.out.includes("secrets aren't loaded into commands AI agents start themselves"), 'expected the agent message', r.out)
+    check(!r.out.includes(SECRET), 'the secret appeared in the output', r.out)
   })
 
   await step('an AI agent may run the package script, masked', async () => {

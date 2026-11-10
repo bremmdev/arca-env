@@ -113,7 +113,7 @@ export async function runCommand(s: Session, opts: RunOptions): Promise<number> 
  * One line naming the profile whenever it isn't the default, the same for every profile.
  * Information, not a warning: agents read it too, so they know which set is active.
  */
-function banner(s: Session, secrets: number | null, masked: boolean): void {
+export function banner(s: Session, secrets: number | null, masked: boolean): void {
   if (s.quiet || s.profile === s.defaultProfile) return
   const via = s.profileSource === 'flag' ? '--profile' : s.profileSource === 'env' ? 'ARCA_PROFILE' : 'arca use'
   const parts = [`profile ${s.profile} (via ${via})`]
@@ -157,7 +157,7 @@ async function withoutProfileValues(s: Session, env: NodeJS.ProcessEnv, profile:
 }
 
 /** Required declared vars that are neither in the env nor in a .env file the framework will load. */
-function missingRequired(s: Session, project: Project, env: NodeJS.ProcessEnv): string[] {
+export function missingRequired(s: Session, project: Project, env: NodeJS.ProcessEnv): string[] {
   const required = Object.entries(project.config.vars).filter(([, d]) => d.required).map(([n]) => n)
   if (required.length === 0) return []
   let fileKeys: Set<string> | null = null
@@ -173,7 +173,7 @@ function missingRequired(s: Session, project: Project, env: NodeJS.ProcessEnv): 
   })
 }
 
-function missingMessage(s: Session, missing: string[], ci: boolean): string {
+export function missingMessage(s: Session, missing: string[], ci: boolean): string {
   const n = missing.length
   const head = `arca: ${n} required variable${n === 1 ? ' is' : 's are'} not set for ${s.forWhom()}:\n  ${missing.join(', ')}`
   if (ci) return `${head}\nAdd ${n === 1 ? 'it' : 'them'} to your CI or hosting platform's environment variables.`

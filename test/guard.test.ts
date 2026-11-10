@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { installConsoleGuard } from '../src/guard.js'
+import { installConsoleGuard, maskContextFiles } from '../src/guard.js'
+import { Redactor, needlesFor } from '../src/redact.js'
 import { addConsoleGuard } from '../src/runner.js'
 
 const SECRET = { name: 'ADMIN_PASSWORD', value: 'Latindash1!' }
@@ -99,5 +100,28 @@ describe('console guard', () => {
     expect(env.NODE_OPTIONS).toMatch(/^--max-old-space-size=4096 --import=file:\/\/\/.*Program%20Files.*guard\.mjs$/)
     addConsoleGuard(env, ['ADMIN_PASSWORD'], 'C:\\Program Files\\arca\\dist\\guard.mjs')
     expect(env.NODE_OPTIONS!.match(/--import/g)).toHaveLength(1)
+  })
+})
+
+describe('agent context files', () => {
+  it("masks Playwright's error-context.md, and only that file", async () => {
+    const written: Record<string, unknown> = {}
+    const fsm = {
+      writeFileSync: (f: string, d: unknown) => void (written[f] = d),
+      writeFile: (f: string, d: unknown, cb: () => void) => ((written[f] = d), cb()),
+      promises: { writeFile: async (f: string, d: unknown) => void (written[f] = d) },
+    }
+    const redactor = new Redactor(needlesFor(SECRET))
+    expect(maskContextFiles(redactor, fsm as never)).toBe(true)
+    expect(maskContextFiles(redactor, fsm as never)).toBe(false)
+    await fsm.promises.writeFile('test-results/x/error-context.md', `Received: "${SECRET.value}"`)
+    fsm.writeFileSync('/tmp/y/error-context.md', Buffer.from(SECRET.value))
+    fsm.writeFile(String.raw`C:\a\error-context.md`, SECRET.value, () => {})
+    await fsm.promises.writeFile('fixture.json', SECRET.value) // a test's own file stays as written
+    expect(written['test-results/x/error-context.md']).toBe('Received: "[arca:ADMIN_PASSWORD]"')
+    expect(written['/tmp/y/error-context.md']).toBe('[arca:ADMIN_PASSWORD]')
+    expect(JSON.stringify(written)).toContain(SECRET.value)
+    expect(written['fixture.json']).toBe(SECRET.value)
+    expect(Object.values(written).filter((v) => v === SECRET.value)).toHaveLength(1)
   })
 })
