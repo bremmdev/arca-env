@@ -51,7 +51,7 @@ Each spike is a throwaway script. The output is a short note added to this folde
 
 ## Implementation status
 
-Checked against the code on 2026-11-05. **0.4.1 is published on npm** and is the MVP: Phase 1 plus profiles, Windows and Linux only (D11), Node 24 or newer. 0.4.0 (2026-11-03) completed the Phase 1 scope below: the passphrase cache (O1), the typo-prompt default (P10), the locked-keyring tip (P8), `init --no-import`, the README migration section, and your real-terminal check of `init`, `import --delete`, `setup` and the profile confirmations (O4, O11). 0.4.1 explains why the passphrase cache is unavailable on WSL. **On `main`, unreleased:** script verification under yarn 2+ (P13), package-manager-aware hints (P14) and the test temp-folder cleanup (O8). Bump to 0.4.2 to ship P13 and P14.
+Checked against the code on 2026-11-10. **0.5.0 is the current release on npm.** The MVP is 0.4.1: Phase 1 plus profiles, Windows and Linux only (D11), Node 24 or newer. 0.4.0 (2026-11-03) completed the Phase 1 scope below: the passphrase cache (O1), the typo-prompt default (P10), the locked-keyring tip (P8), `init --no-import`, the README migration section, and your real-terminal check of `init`, `import --delete`, `setup` and the profile confirmations (O4, O11). 0.4.1 explains why the passphrase cache is unavailable on WSL. 0.4.2 (2026-11-05) added script verification under yarn 2+ (P13) and package-manager-aware hints (P14). 0.5.0 (2026-11-10) adds the Copilot CLI, Copilot VS Code and Codex CI agent markers, Claude Code and Codex deny rules from `init`, and declaring the secrets in the Wrangler config from `init`.
 
 Version 0.1 (2026-10-22) implemented Phase 1 **without profiles**, as asked: first validate replacing or supplementing a `.env` with one set of values. Internally everything used a single set (`projects/<id>/default.vault`), so profiles could be added later without migrating the store.
 
@@ -117,7 +117,7 @@ Scope:
 - [x] Agent-oriented refusal messages for reveal, ad-hoc run, and writes
 - [x] Tests: unit ✅, integration with real `node` children through the redactor ✅, CI matrix on every push (windows-latest and ubuntu-latest × Node 24 and 26, plus real keychains, a packed-package smoke test and signals) ✅ 2026-11-02; arm64, Alpine, pnpm and daily framework checks ✅ 2026-11-03; yarn 1, yarn 4 and bun ✅ 2026-11-05; see [10](10-platform-testing.md). macOS isn't supported (D11)
 - [x] Docs: README with the honest threat model and a "Moving an existing project to arca" section (2026-11-03). One page per framework in [05](05-framework-integration.md) is moved to after the MVP.
-- [x] Publish `@bremmdev/arca-env` with `bin: { "arca": … }` and `exports` for `.` and `./schema.json` (0.4.1 on npm). `./register` follows with the loader in Phase 2.
+- [x] Publish `@bremmdev/arca-env` with `bin: { "arca": … }` and `exports` for `.` and `./schema.json` (0.5.0 on npm). `./register` follows with the loader in Phase 2.
 
 **MVP acceptance scenarios** (scripted, run in CI where possible):
 
@@ -174,9 +174,8 @@ Scope:
 
 ## Still open
 
-Nothing blocking. All product decisions are recorded as D1–D11 above. Open as of 2026-11-05:
+Nothing blocking. All product decisions are recorded as D1–D11 above. Open as of 2026-11-10:
 
-- **Release 0.4.2** with the yarn 2+ fix (P13) and package-manager-aware hints (P14): push the bump, CI publishes.
 - **`arca request` ([11](11-http-requests.md)):** decide Q1–Q6, then spikes R1 (company proxy and TLS inspection) and R4 (real-world `.http` files) before building.
 - **Spikes not finished:** S2 for Prisma 8 once it's stable (Vite, vitest, Prisma 7, Next done 2026-11-06), S3 for the Copilot CLI's `!` shell mode (its agent commands run 2026-11-09, the rest read from source or run 2026-11-06), S4 for Turbo-spawned tasks (npm, pnpm, yarn 1 and 4, bun done), S5, and S7–S8 for Phase 2. Details per item in [08](08-issue-log.md#open-problems-and-things-not-verified-yet).
 - **Overhead budget:** [03 §7](03-architecture.md#7-runner-arca-run) sets under 80 ms. S1 measured about 100 ms on Windows, mostly the extra Node startup. Adjust the budget, or make startup faster?
