@@ -48,7 +48,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "node scripts/smoke.mjs",
-    "frameworks": "node scripts/frameworks.mjs"
+    "frameworks": "node scripts/frameworks.mjs",
+    "vscode": "node scripts/vscode.mjs"
   },
   "dependencies": {
     "@clack/prompts": "^1.8.1",

@@ -100,13 +100,25 @@ The smoke test has no framework on purpose: framework installs are slow and a br
 - Everything binds to `127.0.0.1`, not `localhost`. In a Debian container `localhost` resolved to `::1` first, and neither the readiness probe nor TanStack's server-to-browser pipe got through (P11).
 - Locally: `npm run build && npm run frameworks` (or `-- next` for one). Without Google Chrome, `ARCA_FRAMEWORKS_CHANNEL=` plus `npx playwright-core install chromium`. Passed on Windows and in a `node:24` container before it went into CI.
 
-### Layer 6: VS Code (2026-11-10, Windows, run once, not in CI)
+### Layer 6: VS Code (`scripts/vscode.mjs`, 2026-11-10, Windows, not in CI)
 
 The register loader exists for IDE test buttons and debuggers, so it was checked in a real VS Code (1.144, the installed one) with its own `--user-data-dir` and `--extensions-dir`: the Vitest (1.52.2), Jest (6.4.4) and Playwright (1.1.19) extensions and js-debug. A small driver extension (`@vscode/test-electron`'s `extensionTestsPath`, with the proposed `testObserver` API) ran each scenario through VS Code's own commands (`testing.runAll`, `debug.startDebugging`) and recorded what VS Code shows: test messages with their expected/actual fields, the Problems panel, and Debug Console output through a debug adapter tracker, plus screenshots of the window (`PrintWindow`, so only VS Code's own pixels). The secret lived in a store of its own with the real Credential Manager, the way people use it.
 
 Six workspaces, CommonJS projects like `create-next-app` makes: Vitest (forks), Vitest (threads), Jest (one file, in-band), Jest (two files, workers), Playwright, and the debugger (Debug Console and integrated terminal). Each test logs the secret, writes it to stdout, fails on it and throws with it, and never contains it.
 
-Found: the extensions showed the raw value (I12), worker threads had no masking (I13), Playwright's `error-context.md` (I14), and Debug Console locations pointing at arca (I15). After the fixes: the raw value appears nowhere in what VS Code shows or in any file the runs left in the workspaces, and every test got the secret. The harness lived in a temp folder. Turning it into `scripts/vscode.mjs` would make it repeatable; it needs a desktop session, so it can't run in CI as it is.
+Found: the extensions showed the raw value (I12), worker threads had no masking (I13), Playwright's `error-context.md` (I14), and Debug Console locations pointing at arca (I15). After the fixes: the raw value appears nowhere in what VS Code shows or in any file the runs left in the workspaces, and every test got the secret.
+
+**Repeatable since 2026-11-11: `npm run build && npm run vscode`** (`scripts/vscode.mjs`, driver and screenshot script in `scripts/vscode/`). Run it before a release that touches the loader, the console guard or masking. `npm run vscode -- jest debug` runs some scenarios. It packs the package, installs `@vscode/test-electron`, the three extensions at the pinned versions above (`--latest` for the newest) and the six workspaces in a temp folder, stores the secret with the OS keychain (`--passphrase` for a passphrase store), and runs each scenario in VS Code with its own user data and extensions folders, so your own VS Code isn't touched. It uses `ARCA_VSCODE_EXE`, else the installed VS Code, else downloads stable. Per scenario it fails on:
+
+- the raw value anywhere in what VS Code showed: test messages, Test Results output, the Problems panel, Debug Console output, and the integrated terminal's text (proposed `terminalDataWriteEvent` API);
+- the raw value in any file left in the workspace (Playwright's `error-context.md`, I14);
+- a test process that didn't get the secret (evidence files with a hash check, never the value);
+- failures not shown masked (so a run that reported nothing can't pass);
+- for the debugger, Debug Console locations other than `app.js` and `child.js` (I15).
+
+At the end it deletes the keychain entry and the workspaces (`ARCA_VSCODE_KEEP=1` keeps them), and keeps the JSON reports and screenshots in `<temp>/arca-vscode-*/out`. It needs a desktop session, so it isn't in CI. Linux should work under `xvfb-run -a` (no screenshots there), but only Windows has been run.
+
+First run 2026-11-11 (Windows, VS Code 1.144): all six pass, about 3 minutes in all. To check it catches regressions, it was run once against a build with worker IPC masking switched off and the wrapper compiled under a plain file name: Vitest (raw value in the peek) and Playwright (raw value in the failure message) failed, and so did the debugger (Debug Console locations pointing at the wrapper).
 
 ### Layer 4: local and manual testing on your machine
 

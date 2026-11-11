@@ -1,0 +1,10 @@
+{
+  "name": "arca-vscode-driver",
+  "publisher": "arca",
+  "version": "0.0.1",
+  "private": true,
+  "engines": { "vscode": "^1.100.0" },
+  "main": "./extension.js",
+  "activationEvents": [],
+  "enabledApiProposals": ["testObserver", "terminalDataWriteEvent"]
+}
